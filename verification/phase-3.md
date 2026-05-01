@@ -141,12 +141,23 @@ captured live during the verification run:
 ]
 ```
 
-| credentialId (truncated) | transports | flow |
-|---|---|---|
-| `rb3sJVq12-FM` | `["internal"]` | Mac Touch ID via the OS password app — same-device platform authenticator |
-| `zjvopqH2UW7k` | `["hybrid", "internal"]` | iPhone passkey (created via iCloud Keychain on Mac, then synced — see `verification/phase-2.md` Finding 3 for why the credential advertises both `hybrid` and `internal`) |
+Both credentials were created in same-device ceremonies on the Mac via
+the OS password app — neither involved a QR code or the iPhone Camera
+at enrollment time. The difference is *where the credential was
+saved*:
 
-The trade was signed by the iPhone credential. From the client log:
+| credentialId (truncated) | transports | enrollment ceremony |
+|---|---|---|
+| `rb3sJVq12-FM` | `["internal"]` | Mac password app, saved on this device only. The credential is bound to this Mac; the authenticator advertises only `internal` because it cannot be presented from anywhere else. |
+| `zjvopqH2UW7k` | `["hybrid", "internal"]` | Mac password app, saved to iCloud Keychain. The credential ends up on the user's other Apple devices via iCloud sync; the authenticator advertises `hybrid` (cross-device use via Bluetooth pairing) AND `internal` (same-device use via Touch ID on this Mac, since the credential is present here too). |
+
+This matches the pattern documented in
+`verification/phase-2.md` Finding 3 — `transports` reflects use-time
+capability, not enrollment provenance. Both credentials were enrolled
+on the Mac; one is now usable from a separate device via iCloud sync,
+the other isn't.
+
+From the client log at trade time:
 
 ```
 [19:06:24.799] authenticator response received (id zjvopqH2…SuTylY)
@@ -156,23 +167,30 @@ The trade was signed by the iPhone credential. From the client log:
 ```
 
 The `id` in the authenticator response (`zjvopqH2…`) matches the
-iPhone credential exactly. The Mac Touch ID credential
+iCloud-synced credential exactly. The Mac-only credential
 (`rb3sJVq12…`) was enrolled and present in the credential map
-throughout — but did not sign this assertion. This demonstrates the
-authenticator-class policy enforcement end-to-end on real hardware:
-the server's `allowCredentials` filter at challenge issuance excluded
-the `["internal"]`-only credential, so the OS passkey picker was
-presented with only the iPhone-eligible credential. The user
-authenticated with Face ID on the iPhone, the iPhone signed, the
-server's `verifyAuthenticationResponse` validated the signature
+throughout — but did not sign this assertion. The server's
+`allowCredentials` filter at challenge issuance excluded the
+`["internal"]`-only credential, so the OS passkey picker was
+presented with only the iCloud-synced one. **The user's actual
+gesture at sign time was Touch ID on the Mac**, not Face ID on the
+iPhone — the iCloud-synced credential is locally available on the Mac
+too (that's exactly what the `internal` half of its transports list
+means), so the OS preferred the local biometric.
+
+The server's `verifyAuthenticationResponse` validated the signature
 against the stored public key, recomputed the action hash to confirm
 argument-binding, atomically consumed the challenge, updated the
-credential's counter, and executed the trade.
+credential's counter, and executed the trade. The 13-millisecond gap
+between "submitting tools/call with webauthn evidence" and "trade ok"
+is end-to-end signature verification + action hash recomputation +
+counter update + atomic consume + trade execution.
 
-The 13-millisecond gap between "submitting tools/call with webauthn
-evidence" and "trade ok" is end-to-end signature verification + action
-hash recomputation + counter update + atomic consume + trade execution.
-Real-hardware speed.
+This is the right outcome for the *transport-class* policy as
+implemented (the Mac-bound credential was correctly filtered out;
+the cross-platform-capable credential was correctly accepted), but
+see Finding 4 below — the threat-model property the policy was
+supposed to enforce is not yet achieved by the transport check alone.
 
 ## What's intentionally not in Phase 3
 
@@ -233,19 +251,98 @@ authenticator class, the counter check becomes meaningfully active
 for that class and the test in `assertion.test.ts` test #5 stops being
 purely-emulator territory.
 
+### Finding 4 — Transport-class check does not enforce the threat-model property it was supposed to
+
+This is the most important finding from the hardware run, and it
+sharpens the Phase 2 Finding 3 from a use-time-vs-enrollment-provenance
+caveat into a use-time-still-isn't-enough caveat.
+
+`docs/DECISIONS.md` justifies the cross-platform-required policy with:
+
+> The threat is *display tampering*. A compromised client controls the
+> user's screen; if the user's gesture is on the same device, the user
+> is approving what the client decided to display, which may not be
+> what's actually about to execute. A separate device's display
+> surface is outside the client's trust boundary.
+
+The hardware test demonstrated that the current implementation does
+NOT achieve this property. The user's sign-time gesture was Touch ID
+on the Mac, even though the chosen credential advertises `hybrid`.
+Because iCloud Keychain syncs the credential's private key to all the
+user's Apple devices, the credential is *locally* usable on the Mac
+via Touch ID — and the OS prefers the local biometric over a
+cross-device pairing when both are available. The user never sees a
+QR code; the iPhone is never involved at sign time; the gesture lands
+on the same display surface the (hypothetically compromised) client
+controls.
+
+The transport-class filter is doing exactly what it's defined to do —
+exclude credentials that *can only* be presented from this device. It
+does not ensure that the credential *was* presented from a separate
+device this time. The two are different properties, and the spec text
+in DECISIONS.md was reaching for the second.
+
+What this means for Phase 4 / the SEP:
+
+1. **The transport-class check is necessary but not sufficient.** It
+   correctly excludes credentials with no separation potential
+   (`["internal"]` only) — that's load-bearing for the threat model.
+   But for synced passkeys it doesn't deliver same-time-different-device
+   separation.
+2. **Possible mitigations to evaluate in Phase 4:**
+   - Set `authenticatorAttachment: "cross-platform"` in the request
+     options (currently we don't). This is a *hint* in the WebAuthn
+     spec, not a requirement, so platforms may ignore it. Needs
+     hardware verification to see whether Apple's picker excludes
+     iCloud-synced platform-resident passkeys when this hint is set.
+   - Require the `hybrid` transport to actually be the one used.
+     WebAuthn's `AuthenticatorAttestationResponse` exposes
+     `getTransports()` post-registration but the per-assertion
+     transport that was actually used isn't surfaced to the RP. There
+     may be authenticator-data flag bits or extensions that help, but
+     this needs spec-level investigation.
+   - Reframe the spec to acknowledge that "cross-platform" enforces a
+     *capability* rather than a *use-time guarantee*, and document
+     that the threat-model claim against display tampering requires
+     additional out-of-band signal (e.g. the user's known habit of
+     using a specific authenticator, secondary signals like network
+     locality, attestation chains).
+   - Drop the threat-model claim against same-device-display-tampering
+     for synced-passkey installations and narrow the proposal's
+     promise to "argument-binding + freshness + single-use," which
+     all *are* delivered.
+3. **The eventual SEP must not claim a property the implementation
+   doesn't deliver.** This is the kind of overclaim that gets a
+   proposal kicked back at review. The honest framing: argument-binding
+   is fully verified; the user-presence-on-separate-device claim is a
+   capability check today, not a use-time guarantee, and an open spec
+   question for the SEP draft.
+
 ## Bottom line
 
-Eleven tests green. The headline property — argument-tampered tools
-calls cannot succeed even when the user did sign approval for a
-similar call — is verified at the protocol level
-(`assertion.test.ts` test #2) and would also be verified at the
-hardware level if the user attempted it (the same code path runs).
-Authenticator-class policy enforcement verified on real hardware: the
-iPhone-synced credential signed and succeeded, the Mac-Touch-ID-only
-credential was filtered out and never reached the picker. The two
-Phase 1 carry-forwards from earlier verifications are resolved, and
-three new findings carry into Phase 4.
+Eleven tests green. The headline argument-binding property is fully
+delivered: argument-tampered tool calls cannot succeed even when the
+user did sign approval for a similar call (verified at the protocol
+level by `assertion.test.ts` test #2; the same code path runs on
+hardware). Replay protection is delivered through challenge
+consumption (`challenge_consumed`), and is the operative freshness
+guarantee given that synced passkeys' counter check is largely inert.
+Transport-class filtering correctly excludes credentials with no
+cross-device potential (`rb3sJVq12…` was enrolled, eligible neither
+in `allowCredentials` nor at verify-time).
 
-Phase 3 is done. Phase 4 extracts the working code into a library,
-writes the SEP draft from the protocol shape we now have running, and
-opens the discussion thread on `modelcontextprotocol/specification`.
+What is *not* fully delivered, despite Phase 3's earlier framing:
+**use-time same-device display-tampering resistance**. Finding 4
+above lays out the gap and the mitigation directions for Phase 4.
+The hardware test demonstrated this explicitly — the sign-time
+gesture was Touch ID on the Mac even though the chosen credential
+advertises `hybrid`, because iCloud Keychain made the synced
+credential locally usable.
+
+Phase 3 is done as a *protocol* phase: the wire shape, the verification
+pipeline, the failure-mode taxonomy, and the test surface are all in
+place and runnable. Phase 4 has substantive spec work ahead of it,
+beyond the planned library extraction and SEP draft writing — Finding
+4 needs to be resolved (or its scope narrowed in the spec text) before
+the SEP can honestly claim the security properties it sets out to
+provide.
