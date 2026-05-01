@@ -322,6 +322,12 @@ async function handleChallengeCreate(
     })),
     userVerification: "required",
     timeout: ASSERT_TIMEOUT_MS,
+    // Phase 4 mitigation 1 (investigation only): WebAuthn L3 hint to nudge
+    // the OS picker toward the cross-device path for synced credentials
+    // that advertise both `hybrid` and `internal`. Hints are advisory; the
+    // platform may ignore them. Outcome of hardware testing decides whether
+    // this stays.
+    hints: ["hybrid"],
   };
 
   const displayText = tool.describe(args);

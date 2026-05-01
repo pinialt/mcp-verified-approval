@@ -1,4 +1,8 @@
 import canonicalize from "canonicalize";
+// Re-exported so server and client agree on the union without duplicating
+// the literal values. WebAuthn L3 hint set: spec-defined, advisory.
+export type { PublicKeyCredentialHint } from "@simplewebauthn/browser";
+import type { PublicKeyCredentialHint } from "@simplewebauthn/browser";
 
 export type TradeSide = "buy" | "sell";
 
@@ -139,6 +143,7 @@ export type PublicKeyCredentialRequestOptionsJSONShape = {
   }>;
   userVerification?: "required" | "preferred" | "discouraged";
   timeout?: number;
+  hints?: PublicKeyCredentialHint[];
   extensions?: Record<string, unknown>;
 };
 
