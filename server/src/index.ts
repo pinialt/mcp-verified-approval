@@ -5,8 +5,24 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+} from "@simplewebauthn/server";
+import type {
+  AuthenticatorTransportFuture,
+  RegistrationResponseJSON,
+} from "@simplewebauthn/server";
+import {
   APPROVAL_CHALLENGE_CREATE_METHOD,
+  APPROVAL_ENROLL_BEGIN_METHOD,
+  APPROVAL_ENROLL_FINISH_METHOD,
   APPROVAL_ERROR_CODE,
+  EXPECTED_ORIGIN,
+  RP_ID,
+  RP_NAME,
+  USER_DISPLAY_NAME,
+  USER_HANDLE,
+  USER_NAME,
   VERIFIED_APPROVAL_META_FIELD,
   VERIFIED_APPROVAL_META_KEY,
   VERIFIED_APPROVAL_VERIFIED,
@@ -24,6 +40,10 @@ const TOOL_NAME = "place_trade";
 const SERVER_ID = "phase-1-dev-server";
 const CHALLENGE_TTL_MS = 60_000;
 const REAPER_INTERVAL_MS = 30_000;
+// WebAuthn registration with hybrid transport (Mac shows QR, iPhone scans)
+// reliably takes 30-90s. Five minutes leaves headroom for hesitation.
+const ENROLL_CHALLENGE_TTL_MS = 5 * 60_000;
+const ENROLL_TIMEOUT_MS = 5 * 60_000;
 
 const trades: TradeRecord[] = [];
 
@@ -55,6 +75,33 @@ async function computeActionHash(toolName: string, canonicalArgsJson: string): P
 function approvalError(reason: ApprovalErrorReason, message: string): McpError {
   return new McpError(APPROVAL_ERROR_CODE, message, { reason });
 }
+
+// === Enrolled WebAuthn credentials ===
+
+type CredentialRecord = {
+  credentialId: string; // base64url
+  publicKey: Uint8Array;
+  counter: number;
+  transports?: AuthenticatorTransportFuture[];
+  userHandle: string;
+  createdAt: string; // ISO
+};
+
+const credentials = new Map<string, CredentialRecord>();
+
+// Pending registration challenges, keyed by userHandle. Each `begin` issues
+// a fresh random challenge; the matching `finish` looks it up. Single-user
+// in Phase 2, but keying by userHandle is right for future multi-user.
+const pendingEnrollments = new Map<string, { challenge: string; expiresAt: number }>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingEnrollments) {
+    if (v.expiresAt <= now) pendingEnrollments.delete(k);
+  }
+}, REAPER_INTERVAL_MS).unref();
+
+const userHandleBytes = new TextEncoder().encode(USER_HANDLE);
 
 // === Trade tool ===
 
@@ -120,6 +167,21 @@ const ApprovalChallengeCreateRequestSchema = z.object({
   }),
 });
 
+const EnrollBeginRequestSchema = z.object({
+  method: z.literal(APPROVAL_ENROLL_BEGIN_METHOD),
+  params: z.unknown().optional(),
+});
+
+// `response` is RegistrationResponseJSON; @simplewebauthn validates the
+// inner shape during verifyRegistrationResponse, so the schema just
+// requires it to be present as an object.
+const EnrollFinishRequestSchema = z.object({
+  method: z.literal(APPROVAL_ENROLL_FINISH_METHOD),
+  params: z.object({
+    response: z.record(z.string(), z.unknown()),
+  }),
+});
+
 // === Handlers ===
 
 function describeTrade(args: PlaceTradeArgs): string {
@@ -161,6 +223,86 @@ function buildMcpServer(): McpServer {
       },
     ],
   }));
+
+  server.setRequestHandler(EnrollBeginRequestSchema, async () => {
+    const userHandle = USER_HANDLE;
+    const exclude = [...credentials.values()]
+      .filter((c) => c.userHandle === userHandle)
+      .map((c) => ({ id: c.credentialId, transports: c.transports }));
+    const options = await generateRegistrationOptions({
+      rpName: RP_NAME,
+      rpID: RP_ID,
+      userName: USER_NAME,
+      userID: userHandleBytes,
+      userDisplayName: USER_DISPLAY_NAME,
+      attestationType: "none",
+      excludeCredentials: exclude,
+      authenticatorSelection: {
+        residentKey: "preferred",
+        userVerification: "preferred",
+      },
+      timeout: ENROLL_TIMEOUT_MS,
+    });
+    pendingEnrollments.set(userHandle, {
+      challenge: options.challenge,
+      expiresAt: Date.now() + ENROLL_CHALLENGE_TTL_MS,
+    });
+    console.log(
+      `[enroll] options issued for ${userHandle} (challenge ${options.challenge.slice(0, 8)}…, ${exclude.length} existing creds excluded)`,
+    );
+    return { options };
+  });
+
+  server.setRequestHandler(EnrollFinishRequestSchema, async (req) => {
+    const userHandle = USER_HANDLE;
+    const pending = pendingEnrollments.get(userHandle);
+    if (!pending || pending.expiresAt <= Date.now()) {
+      throw new McpError(APPROVAL_ERROR_CODE, "No pending enrollment or challenge expired", {
+        reason: "no_pending_enrollment",
+      });
+    }
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response: req.params.response as unknown as RegistrationResponseJSON,
+        expectedChallenge: pending.challenge,
+        expectedOrigin: EXPECTED_ORIGIN,
+        expectedRPID: RP_ID,
+        requireUserVerification: false,
+      });
+    } catch (err) {
+      pendingEnrollments.delete(userHandle);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[enroll] verification threw: ${msg}`);
+      throw new McpError(APPROVAL_ERROR_CODE, `Registration verification failed: ${msg}`, {
+        reason: "verification_failed",
+      });
+    }
+    pendingEnrollments.delete(userHandle);
+    if (!verification.verified || !verification.registrationInfo) {
+      throw new McpError(APPROVAL_ERROR_CODE, "Registration not verified", {
+        reason: "verification_failed",
+      });
+    }
+    const { credential } = verification.registrationInfo;
+    const record: CredentialRecord = {
+      credentialId: credential.id,
+      publicKey: credential.publicKey,
+      counter: credential.counter,
+      transports: credential.transports,
+      userHandle,
+      createdAt: new Date().toISOString(),
+    };
+    credentials.set(credential.id, record);
+    console.log(
+      `[enroll] credential stored: ${credential.id.slice(0, 12)}… (${credential.transports?.join(",") ?? "no transports"}) at ${record.createdAt}; total now ${credentials.size}`,
+    );
+    return {
+      success: true,
+      credentialId: credential.id,
+      createdAt: record.createdAt,
+    };
+  });
 
   server.setRequestHandler(ApprovalChallengeCreateRequestSchema, async (req): Promise<ApprovalChallenge> => {
     const { toolName, arguments: args } = req.params;
@@ -305,6 +447,20 @@ export function startServer(port: number = PORT): Promise<{ port: number; close:
       res.end(JSON.stringify(trades, null, 2));
       return;
     }
+    if (req.method === "GET" && url === "/credentials") {
+      // Public-key bytes are intentionally NOT exposed here even in dev —
+      // this endpoint is for visibility into enrollment state, not for
+      // exporting credential material.
+      const list = [...credentials.values()].map((c) => ({
+        credentialId: c.credentialId,
+        transports: c.transports,
+        userHandle: c.userHandle,
+        createdAt: c.createdAt,
+      }));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(list, null, 2));
+      return;
+    }
     if (url === "/mcp" || url.startsWith("/mcp?")) {
       try {
         const headerSessionId = req.headers["mcp-session-id"];
@@ -345,12 +501,16 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const handle = await startServer(PORT);
   console.log("──────────────────────────────────────────────");
-  console.log(" mcp-sec server (Phase 1)");
+  console.log(" mcp-sec server (Phase 2)");
   console.log(` port:      ${handle.port}`);
   console.log(" transport: Streamable HTTP (stateful, /mcp)");
   console.log(` tools:     ${TOOL_NAME}  [${VERIFIED_APPROVAL_META_KEY}=${VERIFIED_APPROVAL_VERIFIED}]`);
-  console.log(` methods:   ${APPROVAL_CHALLENGE_CREATE_METHOD}, tools/list, tools/call`);
+  console.log(
+    ` methods:   ${APPROVAL_CHALLENGE_CREATE_METHOD}, ${APPROVAL_ENROLL_BEGIN_METHOD}, ${APPROVAL_ENROLL_FINISH_METHOD}, tools/list, tools/call`,
+  );
+  console.log(` rp:        id=${RP_ID}  origin=${EXPECTED_ORIGIN}  user=${USER_HANDLE}`);
   console.log(` debug:     GET http://localhost:${handle.port}/trades`);
+  console.log(`            GET http://localhost:${handle.port}/credentials`);
   console.log(` cors:      ${ALLOWED_ORIGIN}`);
   console.log("──────────────────────────────────────────────");
 }
