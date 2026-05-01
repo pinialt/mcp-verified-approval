@@ -1,0 +1,24 @@
+{
+  "name": "mcp-sec",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Reference implementation: MCP with cryptographically verified human approval (Phase 0 scaffold).",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build:shared": "npm --workspace shared run build",
+    "dev:server": "npm --workspace server run dev",
+    "dev:client": "npm --workspace client run dev",
+    "dev": "npm run build:shared && concurrently -n server,client -c blue,magenta \"npm run dev:server\" \"npm run dev:client\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
