@@ -67,3 +67,22 @@ export function canonicalArgs(args: unknown): string {
   }
   return out;
 }
+
+// === Phase 2: WebAuthn enrollment ===
+
+// RP_ID and EXPECTED_ORIGIN are hardcoded constants — never derived from
+// request headers (a known WebAuthn footgun). Both sides import the same
+// values; the server passes them to verifyRegistrationResponse and the
+// client uses RP_ID via the options blob the server returns.
+export const RP_ID = "localhost" as const;
+export const RP_NAME = "MCP Verified Approval (Phase 2)" as const;
+export const EXPECTED_ORIGIN = "http://localhost:5173" as const;
+
+// Single-user demo. Multi-user is post-v1; all credentials enrolled in
+// Phase 2 are bound to this one user.
+export const USER_HANDLE = "phase-2-dev-user" as const;
+export const USER_NAME = "Phase 2 Demo User" as const;
+export const USER_DISPLAY_NAME = "Demo" as const;
+
+export const APPROVAL_ENROLL_BEGIN_METHOD = "approval/enroll/begin" as const;
+export const APPROVAL_ENROLL_FINISH_METHOD = "approval/enroll/finish" as const;
