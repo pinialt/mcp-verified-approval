@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mcp-sec client (Phase 0)</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>mcp-sec client</h1>
+        <span id="status" class="status status--pending">connecting…</span>
+      </header>
+
+      <section>
+        <h2>Available tools</h2>
+        <ul id="tools" class="tools">
+          <li class="muted">…</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>place_trade</h2>
+        <form id="trade-form" class="trade-form">
+          <label>
+            symbol
+            <input name="symbol" type="text" value="AAPL" required />
+          </label>
+          <label>
+            side
+            <select name="side">
+              <option value="buy">buy</option>
+              <option value="sell">sell</option>
+            </select>
+          </label>
+          <label>
+            quantity
+            <input name="quantity" type="number" step="any" min="0" value="10" required />
+          </label>
+          <label>
+            limit
+            <input name="limit" type="number" step="any" min="0" value="150.50" required />
+          </label>
+          <button id="submit" type="submit" disabled>Place trade</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Log</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+
+      <section>
+        <h2>Trades placed this session</h2>
+        <ol id="trades" class="trades">
+          <li class="muted">none yet</li>
+        </ol>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
