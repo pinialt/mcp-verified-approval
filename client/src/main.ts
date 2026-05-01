@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   APPROVAL_CHALLENGE_CREATE_METHOD,
   APPROVAL_ERROR_CODE,
+  VERIFIED_APPROVAL_META_FIELD,
   VERIFIED_APPROVAL_META_KEY,
   VERIFIED_APPROVAL_VERIFIED,
   type ApprovalChallenge,
@@ -137,7 +138,11 @@ async function callTradeWithEvidence(
   const res = await client.request(
     {
       method: "tools/call",
-      params: { name: TOOL_NAME, arguments: args, approvalEvidence: evidence },
+      params: {
+        name: TOOL_NAME,
+        arguments: args,
+        _meta: { [VERIFIED_APPROVAL_META_FIELD]: evidence },
+      },
     },
     ResultSchema,
   );

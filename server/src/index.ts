@@ -7,6 +7,7 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import {
   APPROVAL_CHALLENGE_CREATE_METHOD,
   APPROVAL_ERROR_CODE,
+  VERIFIED_APPROVAL_META_FIELD,
   VERIFIED_APPROVAL_META_KEY,
   VERIFIED_APPROVAL_VERIFIED,
   canonicalArgs,
@@ -84,21 +85,31 @@ const ListToolsRequestSchema = z.object({
   params: z.unknown().optional(),
 });
 
+// ApprovalEvidenceSchema uses z.literal("stub") for `method` — Phase 3 will
+// extend this to z.discriminatedUnion("method", [stubSchema, webauthnSchema]),
+// and a literal here makes that a clean addition rather than a type widening.
+const ApprovalEvidenceSchema = z.object({
+  method: z.literal("stub"),
+  challengeId: z.string(),
+  userConfirmed: z.literal(true),
+});
+
+// Mirrors the SDK's pattern of layering namespaced keys onto request _meta
+// (e.g. progressToken, io.modelcontextprotocol/related-task). The SDK's
+// _meta is z.object({...}, z.core.$loose) so unknown keys passthrough; we
+// declare verifiedApproval here so TS types tell the truth at the read site.
 const CallToolRequestSchema = z.object({
   method: z.literal("tools/call"),
-  params: z
-    .object({
-      name: z.string(),
-      arguments: z.record(z.string(), z.unknown()).optional(),
-      approvalEvidence: z
-        .object({
-          method: z.literal("stub"),
-          challengeId: z.string(),
-          userConfirmed: z.literal(true),
-        })
-        .optional(),
-    })
-    .passthrough(),
+  params: z.object({
+    name: z.string(),
+    arguments: z.record(z.string(), z.unknown()).optional(),
+    _meta: z
+      .object({
+        [VERIFIED_APPROVAL_META_FIELD]: ApprovalEvidenceSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+  }),
 });
 
 const ApprovalChallengeCreateRequestSchema = z.object({
@@ -189,15 +200,16 @@ function buildMcpServer(): McpServer {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const { name, arguments: rawArgs, approvalEvidence } = req.params;
+    const { name, arguments: rawArgs, _meta } = req.params;
     if (name !== TOOL_NAME) {
       throw new McpError(-32602, `Unknown tool: ${name}`);
     }
 
-    if (!approvalEvidence) {
+    const evidence = _meta?.[VERIFIED_APPROVAL_META_FIELD];
+    if (!evidence) {
       throw approvalError("missing_evidence", "Approval evidence required");
     }
-    const stored = challenges.get(approvalEvidence.challengeId);
+    const stored = challenges.get(evidence.challengeId);
     const now = Date.now();
     if (!stored || stored.consumed || stored.expiresAt <= now || stored.toolName !== name) {
       throw approvalError("invalid_challenge", "Invalid or expired approval challenge");

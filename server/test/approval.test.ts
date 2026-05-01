@@ -6,6 +6,7 @@ import { McpError } from "@modelcontextprotocol/sdk/types.js";
 import {
   APPROVAL_CHALLENGE_CREATE_METHOD,
   APPROVAL_ERROR_CODE,
+  VERIFIED_APPROVAL_META_FIELD,
   type ApprovalChallenge,
   type ApprovalErrorReason,
 } from "@mcp-sec/shared";
@@ -51,7 +52,13 @@ async function callTool(
       params: {
         name: "place_trade",
         arguments: args,
-        approvalEvidence: { method: "stub", challengeId, userConfirmed: true },
+        _meta: {
+          [VERIFIED_APPROVAL_META_FIELD]: {
+            method: "stub",
+            challengeId,
+            userConfirmed: true,
+          },
+        },
       },
     },
     z.any(),

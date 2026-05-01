@@ -25,6 +25,12 @@ export type TradeRecord = PlaceTradeArgs & {
 export const VERIFIED_APPROVAL_META_KEY = "verifiedApproval/required" as const;
 export const VERIFIED_APPROVAL_VERIFIED = "verified" as const;
 
+// Key inside tools/call params._meta where the approval evidence lives.
+// Symmetric with the tool-listing _meta annotation above; both sides of the
+// extension reside in _meta so the eventual SEP can describe the whole
+// mechanism as _meta-resident.
+export const VERIFIED_APPROVAL_META_FIELD = "verifiedApproval" as const;
+
 export type ApprovalChallenge = {
   challengeId: string;
   nonce: string;
