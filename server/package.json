@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "nid-webauthn-emulator": "^0.2.11",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.9"
