@@ -12,7 +12,8 @@
     "build:shared": "npm --workspace shared run build",
     "dev:server": "npm --workspace server run dev",
     "dev:client": "npm --workspace client run dev",
-    "dev": "npm run build:shared && concurrently -n server,client -c blue,magenta \"npm run dev:server\" \"npm run dev:client\""
+    "dev": "npm run build:shared && concurrently -n server,client -c blue,magenta \"npm run dev:server\" \"npm run dev:client\"",
+    "test": "npm run build:shared && npm --workspace server test"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
