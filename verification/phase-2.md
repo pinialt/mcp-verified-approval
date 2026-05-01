@@ -101,13 +101,25 @@ cleanly. Captured live from `GET /credentials`:
 
 | credentialId (truncated) | transports | how it was enrolled |
 |---|---|---|
-| `4oIrCodNSiZA` | `["hybrid", "internal"]` | Mac browser's passkey sheet → "Use a phone or tablet" → QR code → iPhone Camera → Face ID → iPhone signs over Bluetooth, credential syncs to iCloud Keychain |
-| `XXGG7vmPy8cL` | `["internal"]` | Chrome on Mac → same-device platform authenticator (Touch ID + Chrome's local passkey provider) |
+| `4oIrCodNSiZA` | `["hybrid", "internal"]` | Mac browser's passkey sheet → save to iCloud Keychain (Apple platform authenticator). The credential was subsequently synced to the iPhone via iCloud, which is why `transports` advertises both `hybrid` and `internal`. |
+| `XXGG7vmPy8cL` | `["internal"]` | Chrome on Mac → same-device platform authenticator (Touch ID + Chrome's local passkey provider). |
 
-Both flows reached `verifyRegistrationResponse` and were stored. The
-two transport profiles together exercise the full Phase 2 surface:
-cross-device hybrid (the threat-model-relevant flow) and same-device
-platform.
+Both flows reached `verifyRegistrationResponse` and were stored. One
+credential is now cross-device-usable via iCloud Keychain sync; the
+other is bound to this Mac only.
+
+Worth being precise about what the `transports` array tells us: it
+describes *what transports the credential can be used over going
+forward*, not *what transport was used at enrollment*. Both
+credentials in this test were created in same-device ceremonies on
+the Mac — neither involved a QR code or Bluetooth pairing at
+enrollment time. The one that advertises `["hybrid", "internal"]`
+does so because the credential ended up on multiple devices via
+iCloud sync, which is a use-time capability. A credential held by
+any synced password manager (iCloud Keychain, Google Password
+Manager, 1Password, etc.) will advertise `hybrid` because it can be
+presented from a paired device, regardless of which device originally
+created it.
 
 ### Multi-credential UI verification
 
@@ -187,9 +199,29 @@ tools."* Summary:
   verify time with a structured `authenticator_class_mismatch` error.
 
 The Phase 2 multi-credential setup is exactly the test surface Phase 3
-needs: the iPhone-hybrid credential should be accepted for
-`place_trade`, and the Chrome-internal-only credential should be
-rejected with `authenticator_class_mismatch`.
+needs: the iCloud-synced credential (`["hybrid", "internal"]`) should
+be accepted for `place_trade`, and the Chrome-internal-only credential
+should be rejected with `authenticator_class_mismatch`.
+
+### Finding 3 — Enrollment ceremony and use-time transport are different properties
+
+Synced passkeys (iCloud Keychain, Google Password Manager, 1Password,
+etc.) blur the line between same-device and cross-device authenticators
+because the credential exists in multiple places. The `transports`
+array reflects use-time capability, not enrollment provenance.
+
+This matters for Phase 3's authenticator-class enforcement. Rejecting
+`transports: ["internal"]` correctly excludes credentials that exist
+*only* on this Mac (and therefore offer no separation from a
+compromised client). But accepting `transports: ["hybrid", "internal"]`
+does **not** by itself prove the user enrolled from a separate device
+— it only proves the credential is now usable from one. Use-time
+separation is what the threat model actually cares about (a compromised
+client can't produce a signature when the authenticator is on a
+different device that performs its own user verification), so this is
+the right property to enforce. The eventual SEP needs to acknowledge
+this distinction explicitly: authenticator-class policy is a *use-time*
+property, not an *enrollment-provenance* guarantee.
 
 ## What's intentionally not in Phase 2
 
