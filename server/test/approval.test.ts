@@ -1,16 +1,28 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import {
-  APPROVAL_CHALLENGE_CREATE_METHOD,
-  APPROVAL_ERROR_CODE,
-  VERIFIED_APPROVAL_META_FIELD,
-  type ApprovalChallenge,
-  type ApprovalErrorReason,
-} from "@mcp-sec/shared";
 import { startServer } from "../src/index.js";
+import {
+  callPlaceTrade,
+  createChallenge,
+  emulatorAssert,
+  enroll,
+  expectApprovalError,
+  newClient,
+  newEmulator,
+} from "./helpers.js";
+
+// Phase 1 tests, carried into Phase 3 with the stub-evidence path removed.
+// What used to assert against `invalid_challenge` now asserts against the
+// specific split reasons (challenge_consumed, challenge_unknown, etc.) per
+// the verification-report carry-forward. The wire path is real WebAuthn
+// assertions produced by the emulator — no production code accepts stub
+// evidence anymore.
+//
+// The assertion.test.ts file repeats the happy/tampering/replay scenarios at
+// a different level of focus: this file frames them as protocol-shape tests
+// (challenge binding, single-use, freshness), assertion.test.ts frames them
+// as part of the WebAuthn-specific surface (signature verify, auth-class,
+// counter regression). The duplication is intentional.
 
 let handle: { port: number; close: () => Promise<void> };
 let baseUrl: string;
@@ -24,65 +36,27 @@ afterAll(async () => {
   await handle.close();
 });
 
-async function newClient(): Promise<Client> {
-  const c = new Client({ name: "approval-test", version: "0.0.0" });
-  await c.connect(new StreamableHTTPClientTransport(new URL(baseUrl)));
-  return c;
+async function setUpClientAndEmulatedCredential(): Promise<{
+  c: Client;
+  emulator: ReturnType<typeof newEmulator>["emulator"];
+}> {
+  const c = await newClient(baseUrl);
+  // Default emulator advertises USB transport — satisfies the
+  // place_trade cross-platform policy.
+  const { emulator } = newEmulator();
+  await enroll(c, emulator);
+  return { c, emulator };
 }
 
-async function createChallenge(
-  c: Client,
-  args: Record<string, unknown>,
-  toolName = "place_trade",
-): Promise<ApprovalChallenge> {
-  return (await c.request(
-    { method: APPROVAL_CHALLENGE_CREATE_METHOD, params: { toolName, arguments: args } },
-    z.any(),
-  )) as ApprovalChallenge;
-}
-
-async function callTool(
-  c: Client,
-  args: Record<string, unknown>,
-  challengeId: string,
-): Promise<unknown> {
-  return await c.request(
-    {
-      method: "tools/call",
-      params: {
-        name: "place_trade",
-        arguments: args,
-        _meta: {
-          [VERIFIED_APPROVAL_META_FIELD]: {
-            method: "stub",
-            challengeId,
-            userConfirmed: true,
-          },
-        },
-      },
-    },
-    z.any(),
-  );
-}
-
-function expectApprovalError(err: unknown, reason: ApprovalErrorReason): void {
-  expect(err).toBeInstanceOf(McpError);
-  const e = err as McpError;
-  expect(e.code).toBe(APPROVAL_ERROR_CODE);
-  expect((e.data as { reason?: string } | undefined)?.reason).toBe(reason);
-}
-
-describe("verified-approval protocol", () => {
-  it("happy path: challenge then call with valid evidence executes the trade", async () => {
-    const c = await newClient();
+describe("verified-approval protocol (carry-over)", () => {
+  it("happy path: challenge then call with a valid assertion executes the trade", async () => {
+    const { c, emulator } = await setUpClientAndEmulatedCredential();
     try {
       const args = { symbol: "AAPL", side: "buy", quantity: 100, limit: 180 };
       const challenge = await createChallenge(c, args);
-      expect(challenge.challengeId).toMatch(/[0-9a-f-]{36}/);
-      expect(challenge.actionHash).toMatch(/^[0-9a-f]{64}$/);
-      expect(challenge.displayText).toBe("Buy 100 AAPL at $180");
+      const assertion = emulatorAssert(emulator, challenge.requestOptions);
 
-      const res = (await callTool(c, args, challenge.challengeId)) as {
+      const res = (await callPlaceTrade(c, args, challenge.challengeId, assertion)) as {
         structuredContent: { success: true; tradeId: string };
       };
       expect(res.structuredContent.success).toBe(true);
@@ -92,33 +66,35 @@ describe("verified-approval protocol", () => {
     }
   });
 
-  it("argument tampering: same challengeId with mutated args is rejected", async () => {
-    const c = await newClient();
+  it("argument tampering: same challengeId with mutated args is rejected as argument_hash_mismatch", async () => {
+    const { c, emulator } = await setUpClientAndEmulatedCredential();
     try {
       const original = { symbol: "AAPL", side: "buy", quantity: 100, limit: 180 };
       const tampered = { symbol: "AAPL", side: "buy", quantity: 1000, limit: 180 };
       const challenge = await createChallenge(c, original);
+      const assertion = emulatorAssert(emulator, challenge.requestOptions);
 
-      const err = await callTool(c, tampered, challenge.challengeId).catch((e) => e);
+      const err = await callPlaceTrade(c, tampered, challenge.challengeId, assertion).catch((e) => e);
       expectApprovalError(err, "argument_hash_mismatch");
     } finally {
       await c.close();
     }
   });
 
-  it("replay: a consumed challenge cannot be reused", async () => {
-    const c = await newClient();
+  it("replay: a consumed challenge cannot be reused (challenge_consumed)", async () => {
+    const { c, emulator } = await setUpClientAndEmulatedCredential();
     try {
       const args = { symbol: "MSFT", side: "sell", quantity: 5, limit: 420 };
       const challenge = await createChallenge(c, args);
+      const assertion = emulatorAssert(emulator, challenge.requestOptions);
 
-      const first = (await callTool(c, args, challenge.challengeId)) as {
+      const first = (await callPlaceTrade(c, args, challenge.challengeId, assertion)) as {
         structuredContent: { success: true };
       };
       expect(first.structuredContent.success).toBe(true);
 
-      const err = await callTool(c, args, challenge.challengeId).catch((e) => e);
-      expectApprovalError(err, "invalid_challenge");
+      const err = await callPlaceTrade(c, args, challenge.challengeId, assertion).catch((e) => e);
+      expectApprovalError(err, "challenge_consumed");
     } finally {
       await c.close();
     }
