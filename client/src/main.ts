@@ -1,9 +1,16 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import { startRegistration } from "@simplewebauthn/browser";
+import type {
+  PublicKeyCredentialCreationOptionsJSON,
+  RegistrationResponseJSON,
+} from "@simplewebauthn/browser";
 import { z } from "zod";
 import {
   APPROVAL_CHALLENGE_CREATE_METHOD,
+  APPROVAL_ENROLL_BEGIN_METHOD,
+  APPROVAL_ENROLL_FINISH_METHOD,
   APPROVAL_ERROR_CODE,
   VERIFIED_APPROVAL_META_FIELD,
   VERIFIED_APPROVAL_META_KEY,
@@ -15,7 +22,9 @@ import {
   type TradeRecord,
 } from "@mcp-sec/shared";
 
-const SERVER_URL = "http://localhost:3030/mcp";
+const SERVER_BASE = "http://localhost:3030";
+const SERVER_URL = `${SERVER_BASE}/mcp`;
+const CREDENTIALS_URL = `${SERVER_BASE}/credentials`;
 const TOOL_NAME = "place_trade";
 
 const $ = <T extends HTMLElement>(sel: string): T => {
@@ -35,9 +44,20 @@ const dialogTextEl = $<HTMLParagraphElement>("#approval-display-text");
 const dialogMetaEl = $<HTMLParagraphElement>("#approval-meta");
 const approveBtn = $<HTMLButtonElement>("#approval-approve");
 const cancelBtn = $<HTMLButtonElement>("#approval-cancel");
+const enrollStatusEl = $<HTMLSpanElement>("#enroll-status");
+const enrollBtn = $<HTMLButtonElement>("#enroll-btn");
+const enrolledCredsEl = $<HTMLOListElement>("#enrolled-creds");
+const enrollLogEl = $<HTMLPreElement>("#enroll-log");
 
 const sessionTrades: TradeRecord[] = [];
 const approvalRequiredTools = new Set<string>();
+
+type EnrolledCredential = {
+  credentialId: string;
+  transports?: string[];
+  userHandle: string;
+  createdAt: string;
+};
 
 function setStatus(state: "pending" | "ok" | "err", text: string): void {
   statusEl.className = `status status--${state}`;
@@ -51,6 +71,125 @@ function log(line: string, kind: "info" | "ok" | "err" = "info"): void {
   span.textContent = `[${ts}] ${line}\n`;
   logEl.appendChild(span);
   logEl.scrollTop = logEl.scrollHeight;
+}
+
+function elog(line: string, kind: "info" | "ok" | "err" = "info"): void {
+  const ts = new Date().toISOString().slice(11, 23);
+  const span = document.createElement("span");
+  if (kind !== "info") span.className = kind;
+  span.textContent = `[${ts}] ${line}\n`;
+  enrollLogEl.appendChild(span);
+  enrollLogEl.scrollTop = enrollLogEl.scrollHeight;
+}
+
+function setEnrollStatus(state: "pending" | "ok" | "err", text: string): void {
+  enrollStatusEl.className = `status status--${state}`;
+  enrollStatusEl.textContent = text;
+}
+
+async function fetchCredentials(): Promise<EnrolledCredential[]> {
+  const r = await fetch(CREDENTIALS_URL);
+  if (!r.ok) throw new Error(`GET /credentials: HTTP ${r.status}`);
+  return (await r.json()) as EnrolledCredential[];
+}
+
+function shortenId(id: string): string {
+  return id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id;
+}
+
+function renderEnrolledCredentials(creds: EnrolledCredential[]): void {
+  if (creds.length === 0) {
+    setEnrollStatus("err", "not enrolled");
+    enrolledCredsEl.innerHTML = `<li class="muted">no credentials enrolled</li>`;
+    return;
+  }
+  // Most recent createdAt = "current".
+  const sorted = [...creds].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  setEnrollStatus(
+    "ok",
+    creds.length === 1 ? "enrolled (1 credential)" : `enrolled (${creds.length} credentials)`,
+  );
+  enrolledCredsEl.innerHTML = "";
+  for (const [i, c] of sorted.entries()) {
+    const li = document.createElement("li");
+    if (i === 0) li.className = "current";
+    const transports = c.transports?.join(",") ?? "—";
+    const main = `${c.createdAt}  ${shortenId(c.credentialId)}  [${transports}]`;
+    li.textContent = main;
+    if (i === 0) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "current";
+      li.appendChild(badge);
+    }
+    enrolledCredsEl.appendChild(li);
+  }
+}
+
+async function refreshEnrolled(): Promise<void> {
+  try {
+    const creds = await fetchCredentials();
+    renderEnrolledCredentials(creds);
+  } catch (err) {
+    elog(`failed to fetch credentials: ${err instanceof Error ? err.message : String(err)}`, "err");
+  }
+}
+
+async function enroll(client: Client): Promise<void> {
+  enrollBtn.disabled = true;
+  try {
+    elog("requesting registration options…");
+    const beginRes = (await client.request(
+      { method: APPROVAL_ENROLL_BEGIN_METHOD },
+      z.object({ options: z.unknown() }),
+    )) as { options: PublicKeyCredentialCreationOptionsJSON };
+    const optionsJSON = beginRes.options;
+    elog(
+      `options received (rpId=${optionsJSON.rp.id}, challenge ${optionsJSON.challenge.slice(0, 8)}…)`,
+    );
+    elog("invoking authenticator — Mac may show QR for hybrid transport, scan with iPhone");
+    let response: RegistrationResponseJSON;
+    try {
+      response = await startRegistration({ optionsJSON });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // simplewebauthn surfaces user-cancellation as NotAllowedError.
+      if (err instanceof Error && err.name === "NotAllowedError") {
+        elog("authenticator ceremony cancelled or timed out", "err");
+      } else {
+        elog(`authenticator failed: ${msg}`, "err");
+      }
+      return;
+    }
+    elog(`authenticator response received (id ${shortenId(response.id)})`);
+
+    elog("submitting to approval/enroll/finish…");
+    try {
+      const finishRes = (await client.request(
+        { method: APPROVAL_ENROLL_FINISH_METHOD, params: { response } },
+        z.object({
+          success: z.literal(true),
+          credentialId: z.string(),
+          createdAt: z.string(),
+        }),
+      )) as { success: true; credentialId: string; createdAt: string };
+      elog(
+        `enrolled  credentialId=${shortenId(finishRes.credentialId)}  createdAt=${finishRes.createdAt}`,
+        "ok",
+      );
+    } catch (err) {
+      if (err instanceof McpError && err.code === APPROVAL_ERROR_CODE) {
+        const reason = (err.data as { reason?: string } | undefined)?.reason ?? "unknown";
+        elog(`enrollment rejected (${reason}): ${err.message}`, "err");
+      } else {
+        elog(`enrollment failed: ${err instanceof Error ? err.message : String(err)}`, "err");
+      }
+      return;
+    }
+    await refreshEnrolled();
+  } finally {
+    enrollBtn.disabled = false;
+  }
 }
 
 function renderTrades(): void {
@@ -200,12 +339,14 @@ async function handleSubmit(client: Client, args: PlaceTradeArgs): Promise<void>
 
 async function main(): Promise<void> {
   setStatus("pending", "connecting…");
+  setEnrollStatus("pending", "checking…");
   let client: Client;
   try {
     client = await connect();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus("err", "disconnected");
+    setEnrollStatus("err", "unavailable");
     log(`connection failed: ${msg}`, "err");
     log(`is the server running on ${SERVER_URL}?`, "err");
     toolsEl.innerHTML = `<li class="muted">unavailable</li>`;
@@ -213,6 +354,12 @@ async function main(): Promise<void> {
   }
   setStatus("ok", "connected");
   log("connected");
+
+  await refreshEnrolled();
+  enrollBtn.disabled = false;
+  enrollBtn.addEventListener("click", () => {
+    void enroll(client);
+  });
 
   let tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
   try {

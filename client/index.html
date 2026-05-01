@@ -14,6 +14,18 @@
       </header>
 
       <section>
+        <h2>Authenticator</h2>
+        <div class="authenticator">
+          <span id="enroll-status" class="status status--pending">…</span>
+          <button id="enroll-btn" type="button" disabled>Enroll for approvals</button>
+        </div>
+        <ol id="enrolled-creds" class="enrolled-creds">
+          <li class="muted">no credentials enrolled</li>
+        </ol>
+        <pre id="enroll-log" class="log enroll-log"></pre>
+      </section>
+
+      <section>
         <h2>Available tools</h2>
         <ul id="tools" class="tools">
           <li class="muted">…</li>

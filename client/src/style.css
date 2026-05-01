@@ -172,3 +172,52 @@ section {
   color: white;
   font-weight: 600;
 }
+
+.authenticator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.authenticator button {
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.authenticator button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.enrolled-creds {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+.enrolled-creds li {
+  margin: 4px 0;
+  font-family: ui-monospace, SF Mono, monospace;
+  font-size: 12px;
+}
+.enrolled-creds li.current {
+  color: var(--ok);
+}
+.enrolled-creds li .badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.enroll-log {
+  margin: 0;
+  min-height: 60px;
+  max-height: 160px;
+}
