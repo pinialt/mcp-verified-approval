@@ -1,19 +1,19 @@
 export type TradeSide = "buy" | "sell";
 
-export interface PlaceTradeArgs {
+export type PlaceTradeArgs = {
   symbol: string;
   side: TradeSide;
   quantity: number;
   limit: number;
-}
+};
 
-export interface PlaceTradeResult {
+export type PlaceTradeResult = {
   success: true;
   tradeId: string;
   executedAt: string;
-}
+};
 
-export interface TradeRecord extends PlaceTradeArgs {
+export type TradeRecord = PlaceTradeArgs & {
   tradeId: string;
   executedAt: string;
-}
+};
