@@ -79,3 +79,13 @@ docs/roadmap.md          Phases, status, pending tasks.
 - Eight required sections: Preamble, Abstract, Motivation, Specification, Rationale, Backward Compatibility, Reference Implementation, Security Implications.
 - Requires a Sponsor (Core Maintainer or Maintainer). Sebastian Mart is *not* a sponsor candidate — peer collaborator only. Sponsor identification is part of pre-Phase-4 community homework.
 - 2-week review cadence at Core Maintainer meetings once formally `in-review`. Plan for 4–6 weeks of formal review minimum.
+
+## Process discipline patterns
+
+Patterns that have surfaced repeatedly during the project, worth writing down:
+
+**Spec-as-bug-finder.** When the SEP draft tightens a normative claim (new MUST, stricter check, modified semantics), cross-check the library and reference implementation immediately — don't carry the spec forward while the implementation lags. Twice during this project, drafting normative text surfaced gaps the implementation wasn't yet enforcing: once during §4 drafting (enrollment defenses, error-enum coverage), and once after the §4.6 serverId uniqueness MUST landed (the demo's hardcoded `SERVER_ID = "phase-3-dev-server"` constant became non-conformant). Pattern: spec change → cross-check pass → fix or document any gaps before moving on.
+
+**External review processing.** Each round of external review (Perplexity x3, Gemini x1) produced a mix of "take it" and "push back on it" items. The pattern that worked: respond to every suggestion explicitly, taking the substantive ones and explaining the reasoning when pushing back. Suggestions to soften over-assertive prose ("authoritative description" → "human-readable surface that pairs with cryptographic binding") were almost always worth taking. Suggestions to add new fields or expand scope ("add a security-level annotation") were almost always worth pushing back on if the existing surface already addressed the underlying concern. The discipline is per-suggestion judgment, not per-review acceptance.
+
+**One commit per coherent change.** Single-purpose commits (e.g., `sep-draft: §4.6 serverId uniqueness MUST, §8.3.1 transport-observability gap diagnosis, §8.4 non-browser clients and transport gap framing (Gemini review)`) make the SEP's revision history self-explanatory and make it easy to revert a specific revision if a reviewer pushes back. Avoiding "misc cleanup" commits keeps each step in the chain reviewable on its own terms.

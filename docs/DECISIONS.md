@@ -152,3 +152,15 @@ Pre-§4.6-§4.11-drafting library tightening. Four additions to the `ApprovalErr
 - **`verification_failed` (promotion, behavior unchanged).** Same — was inline, now typed. Emitted by `handleEnrollFinish` when `verifyRegistrationResponse` from `@simplewebauthn/server` throws or returns `verified: false`.
 
 The `approvalError` function's parameter type narrows from `ApprovalErrorReason | "no_pending_enrollment" | "verification_failed"` to plain `ApprovalErrorReason`. Two new tests cover the behavior-changing splits (one in `assertion.test.ts` for `unsupported_method`, one for `tool_not_approved_required`); the two promotions are type-only changes covered by the existing enrollment-tampering tests. 15 tests green.
+
+## Why introduce `serverId` rather than reference an existing MCP field (Phase 4c, 2026-05-02)
+
+The §4.6 normative requirement that servers use a unique `serverId` raises a natural question: why doesn't the SEP reference an existing MCP field instead of introducing a new identifier?
+
+**No existing MCP field is per-deployment unique.** The MCP base spec defines `serverInfo` in the `initialize` response with `{ name, version }` fields. Neither is designed to be unique across deployments — two independent installations of the same MCP server emit identical `serverInfo`. There is no spec-defined per-deployment identifier. The verified-approval proposal therefore has to introduce one.
+
+**`serverId` is implementation-internal, not on the wire.** The serverId never appears as a transmitted JSON-RPC field. It is consumed only inside the action-hash computation `SHA-256(toolName || 0x00 || canonicalArgs || 0x00 || serverId)`. The wire surface area added by this SEP is one `_meta` annotation key, one capability key under `extensions`, three JSON-RPC methods, and one `_meta` field on `tools/call`. Adding a normative MUST about a value that is never transmitted is precedented (RFC 8785 itself does the same — it mandates how implementations canonicalize JSON without adding wire fields), and a maintainer reviewing wire-protocol expansion correctly sees no expansion here.
+
+**Why the MUST exists.** Without uniqueness, two servers using identical `serverId` values produce identical action hashes for identical (toolName, arguments) tuples. A challenge issued by server A could be replayed against server B if both expose a tool with that name. The "constant default values are non-conformant" clause is what closes the door on implementers reading the original "implementation-defined" wording and hardcoding `"my-server"` or `"mcp-default"`.
+
+**Future spec convergence.** If the MCP base spec ever adopts a `serverInfo.uri` or similar field providing unambiguous per-deployment identity, §4.6 could reference it directly rather than leaving `serverId` implementation-defined. Until then, the proposal carries the MUST and recommends three suitable derivation strategies (OAuth issuer URL, stable URL identifier, persisted UUID).
