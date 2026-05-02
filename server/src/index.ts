@@ -29,6 +29,7 @@ import {
 import {
   createApprovalGate,
   createInMemoryCredentialStore,
+  getApprovalCapabilityDeclaration,
   type ApprovalGate,
 } from "mcp-verified-approval/server";
 
@@ -202,7 +203,7 @@ const EnrollFinishRequestSchema = z.object({
 function buildMcpServer(): McpServer {
   const mcp = new McpServer(
     { name: "mcp-sec-server", version: "0.4.0" },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, ...getApprovalCapabilityDeclaration() } },
   );
   const server = mcp.server;
 
