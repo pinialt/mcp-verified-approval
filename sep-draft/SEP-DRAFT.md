@@ -267,7 +267,7 @@ Normative requirements:
 
 - Servers MUST verify the registration response against the challenge issued by the corresponding `approval/enroll/begin`. Mismatched challenges MUST be rejected.
 - Servers MUST verify that the authenticator performed user verification. A credential whose registration response did not assert UV MUST be rejected.
-- Servers MUST verify the attestation per the policy the server applies. Implementations using `attestation: "none"` MUST NOT skip verification of the registration response itself; they merely accept any attestation issuer.
+- Servers MUST verify the registration response is well-formed and that its embedded signature is valid. Servers using `attestation: "none"` MUST still perform this verification — `"none"` waives only the requirement to validate the attestation issuer's identity, not the requirement to verify the response itself.
 - Servers MUST persist the credential's `publicKey`, `credentialId`, `counter`, `transports`, and `userHandle` for use during subsequent assertions.
 - Servers MUST reject registration if the `credentialId` is already enrolled. This is server-side defense-in-depth: the WebAuthn-layer `excludeCredentials` enforcement at the browser is bypassable when the attestation does not sign over `clientDataJSON`, so the server MUST independently check for re-enrollment after WebAuthn verification but before persisting the new record. Reject with the structured error from §4.10 (the credential-already-enrolled reason).
 - Servers MUST reject registration if the registration challenge has expired or has already been consumed.
@@ -320,11 +320,13 @@ Normative requirements:
 - Servers MUST canonicalize the supplied arguments per §4.6 before computing the action hash.
 - Servers MUST compute the action hash from `(toolName, canonicalArguments, serverId)` per §4.6.
 - Servers MUST construct the wire challenge bytes as `nonce || actionHash` — a 32-byte fresh nonce concatenated with the 32-byte action hash — and base64url-encode them into `requestOptions.challenge`.
+- The nonce MUST be cryptographically random (drawn from a CSPRNG) and MUST be unique across all challenges issued by the server. Predictable or repeated nonces compromise the freshness property defined in §8.2.2.
 - Servers MUST associate the challenge server-side with the tuple `(toolName, canonicalArguments, serverId)` so the verification rules in §4.8 can recompute and compare at call time.
 - Servers SHOULD set `expiresAt` no further in the future than a server-defined TTL; if unstated, implementations SHOULD default to 60 seconds.
 - Servers MUST populate `requestOptions.allowCredentials` with the user's enrolled credentials filtered by the tool's `authenticatorClass` policy per §4.7.
 - Servers MUST set `requestOptions.userVerification` to `"required"`.
 - Servers MUST construct `displayText` from a server-side describe function applied to the supplied arguments. The `displayText` MUST be human-readable and accurately describe the action being approved. This is security-relevant — the user's understanding of what they are signing depends on it matching the action hash bound by the same call. See §8 on display tampering for the threat-model boundaries of this guarantee.
+- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion. The displayText is the user's authoritative description of the action being approved; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets.
 
 ### 4.5 Evidence on `tools/call`: `params._meta["io.modelcontextprotocol/verified-approval"]`
 
@@ -379,7 +381,7 @@ Normative requirements:
 
 - Clients MUST include this evidence in `params._meta` for every call to a tool that carries the verified-approval annotation.
 - Clients MUST set `method` to the literal string `"webauthn"`.
-- Clients MUST set `challengeId` to the value received from the immediately preceding `approval/challenge/create` for the same tool and arguments. Reusing a `challengeId` across calls is a protocol violation; the server's single-use enforcement (§4.8) will reject the second use.
+- Clients MUST set `challengeId` to the value received from the immediately preceding `approval/challenge/create` for the same tool and arguments. Each `challengeId` is bound to exactly one `tools/call` invocation; a client that submits the same `challengeId` in two distinct `tools/call` requests is in protocol violation, and the server's single-use enforcement (§4.8) will reject the second submission with the appropriate structured error from §4.10.
 - Clients MUST forward the WebAuthn assertion response unmodified.
 - Servers MUST verify the evidence per the verification rules in §4.8 before executing the tool.
 - Servers MUST reject the call with the structured error from §4.10 when evidence is missing, malformed, or fails any verification step.
