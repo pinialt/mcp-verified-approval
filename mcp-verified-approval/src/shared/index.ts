@@ -185,7 +185,9 @@ export type ApprovalErrorReason =
   | "signature_counter_regression"
   | "no_eligible_credential"
   | "credential_already_enrolled"
-  | "tool_not_approved_required";
+  | "tool_not_approved_required"
+  | "no_pending_enrollment"
+  | "verification_failed";
 
 // === Schemas ===============================================================
 

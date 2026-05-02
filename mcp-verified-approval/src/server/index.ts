@@ -242,10 +242,7 @@ export function getApprovalCapabilityDeclaration() {
  * raise their own approval-domain errors with the same shape (e.g. for the
  * `missing_evidence` case before the gate is reached).
  */
-export function approvalError(
-  reason: ApprovalErrorReason | "no_pending_enrollment" | "verification_failed",
-  message: string,
-): McpError {
+export function approvalError(reason: ApprovalErrorReason, message: string): McpError {
   return new McpError(APPROVAL_ERROR_CODE, message, { reason });
 }
 
