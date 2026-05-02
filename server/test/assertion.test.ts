@@ -236,5 +236,15 @@ describe("Phase 3 assertion path", () => {
       await c.close();
     }
   });
+
+  it("rejects challenge requests for non-registered tools as tool_not_approved_required", async () => {
+    const c = await newClient(baseUrl, "tool-not-approved");
+    try {
+      const err = await createChallenge(c, { foo: "bar" }, "definitely_not_a_tool").catch((e) => e);
+      expectApprovalError(err, "tool_not_approved_required");
+    } finally {
+      await c.close();
+    }
+  });
 });
 

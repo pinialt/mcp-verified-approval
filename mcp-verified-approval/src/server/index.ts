@@ -315,11 +315,11 @@ export function createApprovalGate(config: ApprovalGateConfig): ApprovalGate {
     arguments: Record<string, unknown>;
   }): Promise<ApprovalChallenge> {
     const tool = tools.get(params.toolName);
-    if (!tool) {
-      throw new McpError(-32602, `Unknown tool: ${params.toolName}`);
-    }
-    if (tool.toolMeta.required !== VERIFIED_APPROVAL_REQUIRED) {
-      throw new McpError(-32602, `Tool ${params.toolName} does not require verified approval`);
+    if (!tool || tool.toolMeta.required !== VERIFIED_APPROVAL_REQUIRED) {
+      throw approvalError(
+        "tool_not_approved_required",
+        `Tool ${params.toolName} is not registered with the verified-approval gate`,
+      );
     }
 
     const policy: AuthenticatorClass =
