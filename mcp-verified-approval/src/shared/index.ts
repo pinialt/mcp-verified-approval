@@ -178,7 +178,8 @@ export type ApprovalErrorReason =
   | "authenticator_class_mismatch"
   | "signature_verification_failed"
   | "signature_counter_regression"
-  | "no_eligible_credential";
+  | "no_eligible_credential"
+  | "credential_already_enrolled";
 
 // === Schemas ===============================================================
 

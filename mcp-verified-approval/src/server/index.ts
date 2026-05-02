@@ -579,6 +579,20 @@ export function createApprovalGate(config: ApprovalGateConfig): ApprovalGate {
       throw approvalError("verification_failed", "Registration not verified");
     }
     const { credential } = verification.registrationInfo;
+    // Defense-in-depth against a client that bypasses the WebAuthn-layer
+    // excludeCredentials enforcement: refuse to overwrite an existing
+    // credential record. Without this, a malicious client could replay a
+    // prior registration response (with clientDataJSON.challenge rewritten
+    // to the current pending challenge — feasible because attestation:none
+    // signs nothing over clientDataJSON) and silently overwrite credential
+    // metadata such as the stored counter.
+    const existing = await credentialStore.get(credential.id);
+    if (existing) {
+      throw approvalError(
+        "credential_already_enrolled",
+        `Credential ${credential.id.slice(0, 12)}… is already enrolled`,
+      );
+    }
     const record: CredentialRecord = {
       credentialId: credential.id,
       publicKey: credential.publicKey,

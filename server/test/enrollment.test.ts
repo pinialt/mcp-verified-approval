@@ -136,6 +136,52 @@ describe("WebAuthn enrollment", () => {
     }
   });
 
+  it("re-enrollment of an already-enrolled credential is rejected with credential_already_enrolled", async () => {
+    // The browser's excludeCredentials enforcement is the first line of
+    // defense against re-enrollment. The threat we test here is "malicious
+    // client bypasses that check and submits a registration response for a
+    // credential the server has already stored" — the server-side existence
+    // check is the ground-truth defense.
+    //
+    // We simulate the bypass by capturing cycle 1's registration response
+    // and submitting it to cycle 2's begin/finish, with clientDataJSON
+    // rewritten so its challenge matches cycle 2's. Attestation "none"
+    // signs nothing over clientDataJSON, so the rewrite passes the WebAuthn
+    // verification step; the server's existing-credential check must catch
+    // the re-enrollment.
+    const c = await newClient();
+    try {
+      const emulator = freshEmulator();
+
+      // Cycle 1: enroll a credential cleanly.
+      const begin1 = await beginEnrollment(c);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const reg1 = emulator.createJSON(EXPECTED_ORIGIN, begin1.options as any);
+      const result1 = (await finishEnrollment(c, reg1)) as { success: true; credentialId: string };
+      expect(result1.success).toBe(true);
+
+      // Cycle 2: begin a fresh challenge, then submit reg1 with its
+      // clientDataJSON.challenge rewritten to match.
+      const begin2 = await beginEnrollment(c);
+      const newChallenge = (begin2.options as { challenge: string }).challenge;
+
+      const decoded = decodeClientDataJSON(reg1.response.clientDataJSON);
+      decoded.challenge = newChallenge;
+      const doctored = {
+        ...reg1,
+        response: { ...reg1.response, clientDataJSON: encodeClientDataJSON(decoded) },
+      };
+
+      const err = await finishEnrollment(c, doctored).catch((e) => e);
+      expect(err).toBeInstanceOf(McpError);
+      const e = err as McpError;
+      expect(e.code).toBe(APPROVAL_ERROR_CODE);
+      expect((e.data as { reason?: string } | undefined)?.reason).toBe("credential_already_enrolled");
+    } finally {
+      await c.close();
+    }
+  });
+
   it("wrong origin: clientDataJSON claiming evil.example.com is rejected with verification_failed", async () => {
     // The emulator does its own browser-style origin/RP-ID validation and
     // refuses to sign for mismatched origins, which is the *browser's* job.
