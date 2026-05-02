@@ -57,6 +57,21 @@ export const VERIFIED_APPROVAL_TOOL_META_KEY =
 export const VERIFIED_APPROVAL_REQUEST_META_KEY =
   "io.modelcontextprotocol/verified-approval" as const;
 
+// === Capability key ========================================================
+//
+// Advertised in a server's `ServerCapabilities` during the `initialize`
+// handshake when the server supports the verified-approval extension. BARE
+// on purpose — capability keys for spec-recognized features are bare
+// strings, not reverse-DNS namespaced (compare `elicitation` in the
+// elicitation spec). The asymmetry with the `_meta` extension keys above
+// (`io.modelcontextprotocol/verified-approval`, namespaced) is deliberate:
+// `_meta` is an open namespace where collision prevention requires
+// reverse-DNS, while capabilities live in the closed handshake namespace
+// the spec controls. See docs/DECISIONS.md "Meta-key rename" entry
+// (2026-05-02) for the full asymmetry decision.
+
+export const VERIFIED_APPROVAL_CAPABILITY_KEY = "verifiedApproval" as const;
+
 // === Tool-side meta values =================================================
 
 export const VERIFIED_APPROVAL_REQUIRED = "verified" as const;

@@ -27,6 +27,7 @@ import type {
 } from "@simplewebauthn/server";
 import {
   APPROVAL_ERROR_CODE,
+  VERIFIED_APPROVAL_CAPABILITY_KEY,
   VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM,
   VERIFIED_APPROVAL_REQUIRED,
   canonicalArgs,
@@ -203,6 +204,36 @@ export interface ApprovalGate {
 
   /** Stop the internal reaper intervals. Idempotent. */
   shutdown(): void;
+}
+
+/**
+ * Returns the partial capabilities object a caller merges into their MCP
+ * server's `initialize` capability declaration:
+ *
+ *     new McpServer(
+ *       { name, version },
+ *       { capabilities: { tools: {}, ...getApprovalCapabilityDeclaration() } },
+ *     );
+ *
+ * Shape: `{ extensions: { verifiedApproval: {} } }`. The capability lives
+ * under the SDK's `extensions` slot — the spec-defined namespace for
+ * non-spec capabilities — rather than as a bare top-level key, because the
+ * MCP SDK's `ServerCapabilitiesSchema` strips unknown top-level keys and
+ * `extensions` is the designed extension point. The `verifiedApproval` key
+ * remains BARE within `extensions` (not reverse-DNS); the asymmetry with
+ * the `_meta` extension key holds — bare within a closed namespace,
+ * namespaced when colliding in an open namespace. See docs/DECISIONS.md
+ * "Capability declaration placement" for the full rationale.
+ *
+ * The empty object value leaves room for future capability sub-options
+ * without breaking the initial shape. Pure function — no gate instance or
+ * config required, since capability declaration happens at server
+ * construction time, often before the gate exists.
+ */
+export function getApprovalCapabilityDeclaration() {
+  return {
+    extensions: { [VERIFIED_APPROVAL_CAPABILITY_KEY]: {} },
+  } as const;
 }
 
 /**
@@ -596,6 +627,7 @@ export {
   ApprovalChallengeSchema,
   VERIFIED_APPROVAL_TOOL_META_KEY,
   VERIFIED_APPROVAL_REQUEST_META_KEY,
+  VERIFIED_APPROVAL_CAPABILITY_KEY,
   VERIFIED_APPROVAL_REQUIRED,
   VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM,
   VERIFIED_APPROVAL_CLASS_PLATFORM,

@@ -27,6 +27,7 @@ import {
   APPROVAL_ENROLL_FINISH_METHOD,
   APPROVAL_ERROR_CODE,
   ApprovalChallengeSchema,
+  VERIFIED_APPROVAL_CAPABILITY_KEY,
   VERIFIED_APPROVAL_REQUIRED,
   VERIFIED_APPROVAL_TOOL_META_KEY,
   type ApprovalChallenge,
@@ -107,6 +108,29 @@ export interface ApprovalClient {
    * user-cancelled-the-OS-prompt case.
    */
   enroll(): Promise<{ success: true; credentialId: string; createdAt: string }>;
+}
+
+/**
+ * Returns true if the server's initialize-time capabilities declare the
+ * verified-approval extension under `capabilities.extensions`. Pass the
+ * capabilities object the SDK exposes after handshake
+ * (e.g. `Client.getServerCapabilities()`).
+ *
+ * The capability lives under the SDK's `extensions` slot — the spec-defined
+ * namespace for non-spec capabilities — rather than as a bare top-level
+ * key. See docs/DECISIONS.md "Capability declaration placement" for the
+ * placement rationale.
+ *
+ * Standalone helper — no `ApprovalClient` instance required, since
+ * capability negotiation happens before the client is constructed in
+ * many architectures. Returns a boolean and lets the caller decide
+ * the response policy (throw, fall back, log, surface inert UI).
+ */
+export function serverDeclaresApprovalCapability(capabilities: unknown): boolean {
+  if (!capabilities || typeof capabilities !== "object") return false;
+  const extensions = (capabilities as Record<string, unknown>).extensions;
+  if (!extensions || typeof extensions !== "object") return false;
+  return VERIFIED_APPROVAL_CAPABILITY_KEY in (extensions as Record<string, unknown>);
 }
 
 const EnrollBeginResponseSchema = z.object({ options: z.unknown() });
@@ -205,6 +229,7 @@ export function createApprovalClient(config: ApprovalClientConfig): ApprovalClie
 export {
   VERIFIED_APPROVAL_TOOL_META_KEY,
   VERIFIED_APPROVAL_REQUEST_META_KEY,
+  VERIFIED_APPROVAL_CAPABILITY_KEY,
   VERIFIED_APPROVAL_REQUIRED,
   VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM,
   VERIFIED_APPROVAL_CLASS_PLATFORM,
