@@ -322,11 +322,12 @@ async function handleChallengeCreate(
     })),
     userVerification: "required",
     timeout: ASSERT_TIMEOUT_MS,
-    // Phase 4 mitigation 1 (investigation only): WebAuthn L3 hint to nudge
-    // the OS picker toward the cross-device path for synced credentials
-    // that advertise both `hybrid` and `internal`. Hints are advisory; the
-    // platform may ignore them. Outcome of hardware testing decides whether
-    // this stays.
+    // Phase 4 mitigation 1: WebAuthn L3 hint to nudge the OS picker toward
+    // the cross-device transport for synced credentials. As of macOS 26.4.1
+    // / Safari 26.4 / Chrome 147 (May 2026), Apple's system picker does not
+    // honor this hint — see verification/phase-4-mitigation-1.md. Hints are
+    // advisory per the W3C spec; the field is forwarded for forward
+    // compatibility with platforms that may later respect it.
     hints: ["hybrid"],
   };
 
