@@ -74,7 +74,8 @@ export interface ApprovalClient {
    *      and returns `"approve"` or `"decline"`,
    *   3. invoke the browser WebAuthn API (`startAuthentication`),
    *   4. return the evidence object the caller attaches to the eventual
-   *      `tools/call` request at `params._meta.verifiedApproval`.
+   *      `tools/call` request at
+   *      `params._meta["io.modelcontextprotocol/verified-approval"]`.
    *
    * Returns:
    *   - `{ status: "approved", evidence }` on success,

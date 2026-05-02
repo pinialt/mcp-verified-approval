@@ -15,20 +15,22 @@ import type {
   PublicKeyCredentialHint,
 } from "@simplewebauthn/browser";
 
-// === The verifiedApproval _meta namespace ==================================
+// === The io.modelcontextprotocol/verified-approval _meta namespace =========
 //
 // The verified-approval extension occupies a single namespace key
-// "verifiedApproval" at TWO distinct _meta locations. The shapes differ by
-// location; the value is **never** the same object on the wire — they share
-// only the namespace label.
+// "io.modelcontextprotocol/verified-approval" at TWO distinct _meta
+// locations. The shapes differ by location; the value is **never** the same
+// object on the wire — they share only the namespace label.
 //
-//   1. Tool-listing _meta:    `tool._meta.verifiedApproval`
+//   1. Tool-listing _meta:
+//      `tool._meta["io.modelcontextprotocol/verified-approval"]`
 //      Value: VerifiedApprovalToolMeta
 //      Set by the server when registering a tool; read by clients during
 //      tools/list to decide whether the tool is gated and (if so) what
 //      authenticator class is required.
 //
-//   2. tools/call request _meta:  `params._meta.verifiedApproval`
+//   2. tools/call request _meta:
+//      `params._meta["io.modelcontextprotocol/verified-approval"]`
 //      Value: ApprovalEvidence
 //      Set by the client on tools/call to attach the WebAuthn assertion;
 //      read by the server gate to verify approval before executing the tool.
@@ -41,7 +43,8 @@ import type {
  * Tool-listing _meta key. Value at this key is a {@link VerifiedApprovalToolMeta}.
  * Use at the read site `tool._meta?.[VERIFIED_APPROVAL_TOOL_META_KEY]`.
  */
-export const VERIFIED_APPROVAL_TOOL_META_KEY = "verifiedApproval" as const;
+export const VERIFIED_APPROVAL_TOOL_META_KEY =
+  "io.modelcontextprotocol/verified-approval" as const;
 
 /**
  * tools/call request _meta key. Value at this key is an {@link ApprovalEvidence}.
@@ -51,7 +54,8 @@ export const VERIFIED_APPROVAL_TOOL_META_KEY = "verifiedApproval" as const;
  * symbol used at the request-side read site. The two are kept separate so
  * call sites are self-documenting about which value shape applies.
  */
-export const VERIFIED_APPROVAL_REQUEST_META_KEY = "verifiedApproval" as const;
+export const VERIFIED_APPROVAL_REQUEST_META_KEY =
+  "io.modelcontextprotocol/verified-approval" as const;
 
 // === Tool-side meta values =================================================
 
@@ -64,7 +68,7 @@ export type AuthenticatorClass =
   | typeof VERIFIED_APPROVAL_CLASS_PLATFORM;
 
 /**
- * Shape of `tool._meta.verifiedApproval`.
+ * Shape of `tool._meta["io.modelcontextprotocol/verified-approval"]`.
  *
  * `authenticatorClass` defaults to `"cross-platform"` when omitted — tools
  * must opt in to `"platform"` deliberately. See docs/DECISIONS.md, section
@@ -138,9 +142,9 @@ export type ApprovalChallenge = {
 export type AuthenticationResponseJSON = SdkAuthenticationResponseJSON;
 
 /**
- * Value shape at `params._meta.verifiedApproval` on a tools/call request.
- * Single-variant today; switch to `z.discriminatedUnion("method", ...)` when
- * a second method materializes.
+ * Value shape at `params._meta["io.modelcontextprotocol/verified-approval"]`
+ * on a tools/call request. Single-variant today; switch to
+ * `z.discriminatedUnion("method", ...)` when a second method materializes.
  */
 export type ApprovalEvidence = {
   method: "webauthn";

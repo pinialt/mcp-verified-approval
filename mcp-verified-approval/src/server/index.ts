@@ -192,7 +192,8 @@ export interface ApprovalGate {
   verifyApprovalForCall(toolName: string, args: unknown, evidence: unknown): Promise<void>;
 
   /**
-   * Returns the gate's authoritative `_meta.verifiedApproval` block for
+   * Returns the gate's authoritative
+   * `_meta["io.modelcontextprotocol/verified-approval"]` block for
    * `toolName`, or `null` if the tool is not registered with the gate.
    * Use this from your `tools/list` handler to surface gating metadata, and
    * from your `tools/call` handler to decide whether to invoke

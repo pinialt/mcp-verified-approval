@@ -13,7 +13,7 @@ MCP today provides advisory tool annotations (`destructiveHint`, `readOnlyHint`,
 Servers mark sensitive tools with a `_meta.verifiedApproval/required: "verified"` annotation. Before invoking such a tool, clients must:
 1. Request a per-call challenge from the server (`approval/challenge/create`).
 2. Obtain a cryptographic signature from a separate authenticator (passkey on a phone, hardware key) bound to a hash of `(toolName, canonicalArguments, serverId)`.
-3. Submit the evidence with the tool call (`tools/call` with `params._meta.verifiedApproval`).
+3. Submit the evidence with the tool call (`tools/call` with `params._meta["io.modelcontextprotocol/verified-approval"]`).
 
 The server independently verifies the signature, the freshness of the challenge, and that the action hash matches the actual call. The enforcement point moves from "the client promises to ask" to "the server refuses to execute without proof."
 
