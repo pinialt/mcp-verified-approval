@@ -1,10 +1,8 @@
-# Phase 4 mitigation 1 — investigation report (PARTIAL)
+# Phase 4 mitigation 1 — investigation report
 
 Branch: `phase-4-mitigation-1-investigation`
 Commit: `f680443` — *phase-4-mitigation-1: hints: ["hybrid"] in assertion options*
-Status: **NOT COMPLETE.** Code change landed and unit tests green. Hardware
-observation portion of the brief was not executed — see "What was not run"
-below. The branch is unmerged.
+Status: **complete.** Code change landed, unit tests green, hardware observation captured across all four experimental cells (Safari 26.4 + Chrome 147, with and without `hints: ["hybrid"]`) on macOS 26.4.1. See the `## Status` section at the end of this report for the cell-level summary and the SEP framing recommendation derived from the result.
 
 ## What this investigation is for
 
