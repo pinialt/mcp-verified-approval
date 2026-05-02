@@ -413,8 +413,16 @@ export function createApprovalGate(config: ApprovalGateConfig): ApprovalGate {
       challengeId?: unknown;
       response?: unknown;
     };
+    if (typeof evidenceObj.method !== "string" || !evidenceObj.method) {
+      throw approvalError("missing_evidence", "Approval evidence missing or malformed");
+    }
+    if (evidenceObj.method !== "webauthn") {
+      throw approvalError(
+        "unsupported_method",
+        `Unsupported approval method: ${evidenceObj.method}`,
+      );
+    }
     if (
-      evidenceObj.method !== "webauthn" ||
       typeof evidenceObj.challengeId !== "string" ||
       !evidenceObj.response ||
       typeof evidenceObj.response !== "object"

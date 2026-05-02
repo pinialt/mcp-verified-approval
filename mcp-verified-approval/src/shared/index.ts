@@ -158,17 +158,22 @@ export type AuthenticationResponseJSON = SdkAuthenticationResponseJSON;
 
 /**
  * Value shape at `params._meta["io.modelcontextprotocol/verified-approval"]`
- * on a tools/call request. Single-variant today; switch to
- * `z.discriminatedUnion("method", ...)` when a second method materializes.
+ * on a tools/call request. The `method` field is typed as a free string so
+ * the schema accepts forward-compatible values; the server gate's runtime
+ * verification narrows to `"webauthn"` (today's only conformant value) and
+ * rejects others with the `unsupported_method` reason. Switch both type and
+ * schema to a `z.discriminatedUnion("method", ...)` when a second conformant
+ * method materializes.
  */
 export type ApprovalEvidence = {
-  method: "webauthn";
+  method: string;
   challengeId: string;
   response: AuthenticationResponseJSON;
 };
 
 export type ApprovalErrorReason =
   | "missing_evidence"
+  | "unsupported_method"
   | "challenge_unknown"
   | "challenge_expired"
   | "challenge_consumed"
@@ -189,7 +194,7 @@ export type ApprovalErrorReason =
  * read site.
  */
 export const ApprovalEvidenceSchema = z.object({
-  method: z.literal("webauthn"),
+  method: z.string(),
   challengeId: z.string(),
   response: z.record(z.string(), z.unknown()),
 });

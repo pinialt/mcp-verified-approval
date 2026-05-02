@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
+import { VERIFIED_APPROVAL_REQUEST_META_KEY } from "mcp-verified-approval/shared";
 import { startServer } from "../src/index.js";
 import {
   callPlaceTrade,
@@ -195,6 +197,41 @@ describe("Phase 3 assertion path", () => {
 
       const err = await callPlaceTrade(c, args, ch2.challengeId, a2).catch((e) => e);
       expectApprovalError(err, "signature_counter_regression");
+    } finally {
+      await c.close();
+    }
+  });
+
+  it("rejects evidence with non-webauthn method as unsupported_method", async () => {
+    const c = await newClient(baseUrl, "unsupported-method");
+    try {
+      const { emulator } = newEmulator();
+      await enroll(c, emulator);
+
+      const args = { symbol: "AAPL", side: "buy", quantity: 1, limit: 100 };
+      const challenge = await createChallenge(c, args);
+      const assertion = emulatorAssert(emulator, challenge.requestOptions);
+
+      const err = await c
+        .request(
+          {
+            method: "tools/call",
+            params: {
+              name: "place_trade",
+              arguments: args,
+              _meta: {
+                [VERIFIED_APPROVAL_REQUEST_META_KEY]: {
+                  method: "totp",
+                  challengeId: challenge.challengeId,
+                  response: assertion,
+                },
+              },
+            },
+          },
+          z.any(),
+        )
+        .catch((e) => e);
+      expectApprovalError(err, "unsupported_method");
     } finally {
       await c.close();
     }
