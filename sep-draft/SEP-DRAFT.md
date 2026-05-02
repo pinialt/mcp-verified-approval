@@ -18,7 +18,7 @@ Updates: TBD
 
 ## 2. Abstract
 
-The Model Context Protocol provides advisory tool annotations and session-level authorization, but no mechanism for cryptographically verifying that a specific human consented to a specific tool invocation with specific arguments. For tool calls with high-stakes consequences — placing trades, deploying infrastructure, deleting data — a confirmation rendered by a potentially compromised client is insufficient: an agent driving the same client can approve its own prompts.
+The Model Context Protocol provides advisory tool annotations and session-level authorization, but no mechanism for cryptographically verifying that a specific human consented to a specific tool invocation with specific arguments. For tool calls with high-stakes consequences — placing trades, deploying infrastructure, deleting data — a confirmation rendered by a potentially compromised client is insufficient: the same client or agent that issues the call can simulate the approval, in ways the human did not meaningfully authorize.
 
 This proposal introduces per-call verified approval. Tools mark themselves as requiring approval via the `_meta` annotation under the `io.modelcontextprotocol/verified-approval` key. Before invoking such a tool, the client requests a server-issued challenge whose value includes a hash of the canonicalized arguments. The user authorizes the call through a WebAuthn assertion bound to that challenge. The server independently verifies the signature, recomputes the action hash from the actual tool-call arguments, and rejects mismatches. The ceremony composes additively with existing MCP primitives: OAuth Authorization remains session-level; tool annotations remain advisory unless this proposal's annotation is present; elicitation remains the mechanism for routine and out-of-band data flows.
 
@@ -37,13 +37,13 @@ The standard UX for that consent is a confirmation dialog rendered by the MCP cl
 - **Prompt injection**, where a malicious tool output instructs the agent to "click yes" and the agent complies as if a user had.
 - **Habitual confirmation**, where a user has clicked yes hundreds of times and clicks yes again without reading.
 
-In each case the agent is, in effect, approving its own prompts.
+In each case, the client or agent that issues the call can simulate approval the human did not meaningfully provide.
 
 ### 3.2 What MCP currently provides, and why each is insufficient
 
 #### 3.2.1 Tool annotations (destructiveHint, etc.)
 
-The MCP base spec defines tool annotations — `destructiveHint`, `readOnlyHint`, `idempotentHint`, `openWorldHint` — as advisory hints. The spec gives clients no obligation to surface them and no normative behavior tied to them. They are a UI affordance: a destructive-tool icon, a confirmation prompt the client may or may not render. Annotations cannot enforce a security boundary because nothing in the spec compels the client to act on them, and the client is exactly the component the threat model questions.
+The MCP base spec defines tool annotations — `destructiveHint`, `readOnlyHint`, `idempotentHint`, `openWorldHint` — as advisory hints. The spec gives clients no obligation to surface them and no normative behavior tied to them. They are a UI affordance: a destructive-tool icon, a confirmation prompt the client may or may not render. Annotations were designed as advisory hints, not enforcement primitives. They serve their intended purpose for UI affordances; they are not the appropriate mechanism for the threat model this proposal addresses.
 
 #### 3.2.2 OAuth Authorization
 
