@@ -595,16 +595,17 @@ Each of these primitives is real and useful for its actual purpose. The proposal
 
 ## 6. Backward Compatibility
 
-- Tools without an `io.modelcontextprotocol/verified-approval` `_meta` annotation behave identically.
-- Clients without `verifiedApproval` capability cannot invoke approval-required tools — the server SHOULD reject with a structured error.
-- Servers SHOULD declare the capability in `initialize`.
-- Migration path: existing tools opt in by adding the annotation.
+Tools without the annotation behave identically to today. The verified-approval annotation is opt-in per tool. A tool whose `_meta` does not include the `"io.modelcontextprotocol/verified-approval"` key is invoked through the standard `tools/call` flow, with no challenge issuance, no WebAuthn ceremony, and no additional evidence shape. Existing servers and clients that never encounter the annotation are unaffected by this proposal.
+
+Clients without ceremony support cannot invoke approval-required tools. A client that does not implement the §4.4 methods or the §4.5 evidence shape fails to invoke any approval-annotated tool: the server returns the §4.10 `missing_evidence` reason. This is the proposal's intended behavior, not a backward-compatibility break. Pre-existing clients that never encounter an annotated tool continue to work; pre-existing clients that newly encounter one fail at the call with a structured reason an updated client can handle.
+
+Servers without the capability declaration cannot register approval-required tools. Per §4.3, a server that registers any approval-required tool MUST declare the `verifiedApproval` capability in its `initialize` response. The capability declaration is the contract that the server supports the methods defined in §4.4 and accepts the evidence shape defined in §4.5. Servers that do not declare the capability MUST NOT register approval-required tools — there is no client-callable path to invoke them, and the inconsistency suggests a server bug.
+
+Migration path: existing tools opt in by adding the annotation. The server author adds `_meta["io.modelcontextprotocol/verified-approval"]` with `required: "verified"` (and optionally `authenticatorClass`), declares the capability per §4.3, and wires the `tools/call` handler to invoke the verified-approval gate before executing the tool. No changes are required to the tool's `inputSchema`, output format, or business logic — the opt-in is metadata-and-wiring at the server layer.
 
 ## 7. Reference Implementation
 
-- One paragraph linking to the repo, library, demo, test suite, and verification reports.
-- Note that the implementation is end-to-end working and hardware-tested.
-- Note that the library API mirrors the spec's normative shape.
+The reference implementation is a TypeScript library at `mcp-verified-approval` (<repo URL TBD>) exposing `./shared`, `./server`, and `./client` subpath exports, with three workspace consumers: a Node MCP server demo, a browser-based client demo, and an in-process integration suite. The library API mirrors the spec's normative shape — `createApprovalGate` for server registration, `createApprovalClient` for client-side ceremony, the `ApprovalErrorReason` typed union matching §4.10's enumeration, and `_meta` key constants matching §4.2 and §4.5. The implementation is hardware-tested against macOS Touch ID and iCloud Keychain synced passkeys (Mac → iPhone via hybrid sync); the integration suite passes 15 tests covering the §4.8 verification rules, §4.4.2 enrollment defenses, §4.10 error reasons, and the per-call ceremony. Per-phase verification reports live in `verification/`.
 
 ## 8. Security Implications
 
