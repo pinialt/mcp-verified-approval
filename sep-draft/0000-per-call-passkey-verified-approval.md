@@ -1,20 +1,13 @@
-# SEP-XXXX: Per-Call Passkey Verified Approval for MCP Tool Calls
+# SEP-0000: Per-Call Passkey Verified Approval for MCP Tool Calls
 
-```
-SEP: XXXX
-Title: Per-Call Passkey Verified Approval for MCP Tool Calls
-Author: Paul Pini Sherbaum
-Status: Draft
-Type: Standards Track
-Created: 2026-05-02
-PR: TBD
-```
+- **Status**: Draft
+- **Type**: Standards Track
+- **Created**: 2026-05-02
+- **Author(s)**: Paul Pini Sherbaum (@pinialt)
+- **Sponsor**: None (seeking sponsor)
+- **PR**: https://github.com/modelcontextprotocol/modelcontextprotocol/pull/0000
 
-## 1. Preamble
-
-See the metadata block at the top of this document.
-
-## 2. Abstract
+## Abstract
 
 The Model Context Protocol provides advisory tool annotations and session-level authorization, but no mechanism for cryptographically binding a user-verified authenticator gesture to a specific tool invocation with specific arguments. For tool calls with high-stakes consequences — placing trades, deploying infrastructure, deleting data — a confirmation rendered by a potentially compromised client is insufficient: the same client or agent that issues the call can fabricate the approval gesture without meaningful human authorization.
 
@@ -22,7 +15,7 @@ This proposal introduces per-call verified approval. Tools mark themselves as re
 
 The proposal delivers cryptographically verified argument-binding, freshness, and single-use enforcement. It does not, on its own, defend against display-tampering attacks on synced credentials (per-call gestures may occur on the same device the client controls); the Security Implications section documents this residual risk and proposes future work. The reference implementation includes hardware-tested end-to-end ceremony, server-side verification, and a discriminated-outcome client API.
 
-## 3. Motivation
+## Motivation
 
 ### 3.1 The threat surface
 
@@ -71,7 +64,7 @@ The gap has been recognized in prior community discussion. Discussions #581, #59
 
 The rest of this document defines the mechanism. The Specification section defines a tool-side annotation that marks a tool as requiring approval, a server-issued challenge whose value includes a hash of the canonicalized arguments, a WebAuthn ceremony that produces a signature bound to that challenge, and server-side verification that recomputes the action hash from the actual call and rejects on mismatch. The proposal is structurally additive: tools that do not carry the annotation behave exactly as they do today, and clients that do not implement the ceremony interact with non-annotated tools exactly as they do today. The new behavior applies only when the annotation is present.
 
-## 4. Specification
+## Specification
 
 ### 4.1 Overview of the ceremony
 
@@ -530,7 +523,7 @@ Verified approval is structurally additive: it composes with existing MCP primit
 
 **Elicitation** (§3.2.4 and §3.2.5) is a routine and out-of-band input mechanism. Form-mode elicitation collects routine input through the client; URL-mode elicitation collects sensitive input out-of-band; verified approval collects per-call human consent for an action. A single server may use all three: elicit routine input via form mode, redirect to a URL for a payment authorization, and require verified approval for the most consequential tool calls. The three address adjacent but distinct problems.
 
-## 5. Rationale
+## Rationale
 
 ### 5.1 Why `_meta` over annotations
 
@@ -592,7 +585,7 @@ The proposal selects WebAuthn over a number of adjacent primitives that solve ad
 
 Each of these primitives is real and useful for its actual purpose. The proposal selects WebAuthn because it produces a cryptographic signature bound to a value the server controls — and that value can carry the action hash.
 
-## 6. Backward Compatibility
+## Backward Compatibility
 
 Tools without the annotation behave identically to today. The verified-approval annotation is opt-in per tool. A tool whose `_meta` does not include the `"io.modelcontextprotocol/verified-approval"` key is invoked through the standard `tools/call` flow, with no challenge issuance, no WebAuthn ceremony, and no additional evidence shape. Existing servers and clients that never encounter the annotation are unaffected by this proposal.
 
@@ -602,11 +595,7 @@ Servers without the capability declaration cannot register approval-required too
 
 Migration path: existing tools opt in by adding the annotation. The server author adds `_meta["io.modelcontextprotocol/verified-approval"]` with `required: "verified"` (and optionally `authenticatorClass`), declares the capability per §4.3, and wires the `tools/call` handler to invoke the verified-approval gate before executing the tool. No changes are required to the tool's `inputSchema`, output format, or business logic — the opt-in is metadata-and-wiring at the server layer.
 
-## 7. Reference Implementation
-
-The reference implementation is a TypeScript library at `mcp-verified-approval` (https://github.com/pinialt/mcp-verified-approval) exposing `./shared`, `./server`, and `./client` subpath exports, with three workspace consumers: a Node MCP server demo, a browser-based client demo, and an in-process integration suite. The library API mirrors the spec's normative shape — `createApprovalGate` for server registration, `createApprovalClient` for client-side ceremony, the `ApprovalErrorReason` typed union matching §4.10's enumeration, and `_meta` key constants matching §4.2 and §4.5. The implementation is hardware-tested against macOS Touch ID and iCloud Keychain synced passkeys (Mac → iPhone via hybrid sync); the integration suite passes 15 tests covering the §4.8 verification rules, §4.4.2 enrollment defenses, §4.10 error reasons, and the per-call ceremony. Per-phase verification reports live in `verification/`.
-
-## 8. Security Implications
+## Security Implications
 
 ### 8.1 Threat model
 
@@ -721,5 +710,9 @@ The current proposal assumes a present human. Some agent deployments are headles
 #### 8.4.5 Non-browser client architectures
 
 The reference implementation invokes the WebAuthn ceremony through `navigator.credentials.get()` from a browser context. MCP clients exist in many other environments — CLI tools, IDE extensions, native desktop applications, headless agent runtimes — where a direct browser API is not available. The protocol surface defined by this proposal is wire-level (JSON-RPC methods, evidence shape, action-hash construction); how a client invokes the WebAuthn ceremony is a client-architecture concern this proposal does not standardize. Native clients may use platform CTAP2 bindings; CLI clients may spawn a temporary local web bridge; IDE extensions may delegate to the host editor's authentication surface. A future profile could define standardized patterns for these architectures, but doing so prematurely would over-constrain implementations that have working solutions today.
+
+## Reference Implementation
+
+The reference implementation is a TypeScript library at `mcp-verified-approval` (https://github.com/pinialt/mcp-verified-approval) exposing `./shared`, `./server`, and `./client` subpath exports, with three workspace consumers: a Node MCP server demo, a browser-based client demo, and an in-process integration suite. The library API mirrors the spec's normative shape — `createApprovalGate` for server registration, `createApprovalClient` for client-side ceremony, the `ApprovalErrorReason` typed union matching §4.10's enumeration, and `_meta` key constants matching §4.2 and §4.5. The implementation is hardware-tested against macOS Touch ID and iCloud Keychain synced passkeys (Mac → iPhone via hybrid sync); the integration suite passes 15 tests covering the §4.8 verification rules, §4.4.2 enrollment defenses, §4.10 error reasons, and the per-call ceremony. Per-phase verification reports live in `verification/`.
 
 <!-- No appendices in v1. Test vectors live in the reference implementation. -->
