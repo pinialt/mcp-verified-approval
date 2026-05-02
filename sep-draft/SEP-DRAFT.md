@@ -535,31 +535,63 @@ Verified approval is structurally additive: it composes with existing MCP primit
 
 ### 5.1 Why `_meta` over annotations
 
-- Advisory vs normative.
+The MCP base specification defines tool annotations — `destructiveHint`, `readOnlyHint`, `idempotentHint`, `openWorldHint` — as advisory hints. Clients are not obligated to surface them; no normative server behavior is tied to them. They exist as UI affordances. The verified-approval annotation is normative: a server that emits it expects the client to perform the ceremony of §4.4 and the call to fail without evidence. Layering a normative requirement into a family the spec defines as advisory would create persistent ambiguity — every reader would need to argue why one annotation is enforced when its siblings are not.
+
+The MCP `_meta` namespace was designed for exactly this case: extension fields that are not part of the base spec but live within its data model. The SDK already uses `_meta` for its own extensions — `progressToken` and `io.modelcontextprotocol/related-task` are namespaced keys on the request-side `_meta`. Layering the verified-approval annotation under `_meta` uses an existing extension point in the way it was intended, rather than overloading an existing field family with a foreign semantic.
 
 ### 5.2 Why JCS for canonicalization
 
-- Determinism, ecosystem fit.
+Both client and server must produce byte-identical canonicalized output from the same logical arguments object — argument-binding depends on it. "Deterministic JSON" sounds like a settled term, but in practice the ecosystem hosts multiple non-equivalent variants: RFC 8785 (JCS), JSON-LD's URDNA2015, ad-hoc sort-keys-and-stringify implementations, and several library-specific normalizations. Each produces different bytes for the same input. Naming a specific canonicalization scheme disambiguates: the proposal names RFC 8785, and any conformant JCS implementation produces identical bytes regardless of language or runtime.
+
+The reference implementation uses `canonicalize@3.0.0` by Erdtman — the author of RFC 8785. The library is pure ESM with zero runtime dependencies and works in both Node and browser bundles, which matters because the same canonicalization runs in both the server gate and the client ceremony. Conformant alternatives in other languages exist; the spec text names the algorithm, not the library.
 
 ### 5.3 Why argument-binding via challenge field, not separate field
 
-- Reasoning.
+The action hash is embedded in the WebAuthn challenge bytes rather than carried as a separate signed field. This is a deliberate use of the WebAuthn signing surface: WebAuthn assertions sign over the challenge value, which is the bytes the server provides and the authenticator passes through to the signing ceremony. Putting the action hash inside the challenge means the WebAuthn signature *is* the argument-binding — there is no separate signing step, no separate field for the server to verify, and no risk that an implementation forgets the second verify and ships a binding-free hole.
+
+A natural alternative would have been to carry the action hash as a separate field on the evidence envelope and have the server verify a separate signature over it. This doubles the cryptographic work — the server verifies the WebAuthn assertion AND a separate signature — and introduces a place where an implementation can be subtly wrong. The "two signatures" pattern is also harder to reason about: under what conditions is the second signature trusted? Under what key? The single-signature design avoids these questions.
+
+The wire challenge is 64 bytes — 32-byte nonce concatenated with 32-byte action hash, encoded as 86 base64url characters — which fits comfortably within the variable-length challenge field WebAuthn Level 3 platforms support.
 
 ### 5.4 Why authenticator class is a capability filter, not a use-time guarantee
 
-- Link to the empirical mitigation-1 finding.
+The authenticator-class field began as a use-time guarantee. Phase 3 intended that tools annotated `authenticatorClass: "cross-platform"` would be signed on a separate device — a phone via WebAuthn's hybrid transport, or a hardware key — moving the user's signing gesture to a surface outside the client's trust boundary. The mechanism was server-side: issue the challenge with `hints: ["hybrid"]`, expect the OS picker to surface only cross-device options.
+
+Empirical testing in Phase 4 showed this is unachievable with WebAuthn Level 3 today. On macOS 26.4.1 with Safari 26.4 and Chrome 147 (May 2026), `hints: ["hybrid"]` is a no-op: Apple's system picker presents the local synced credential regardless of the hint. A credential whose stored transports include both `"hybrid"` and `"internal"` — typical of iCloud Keychain and Google Password Manager passkeys — is locally usable on the device hosting the client, and the OS chooses the local presentation path. The empirical finding is documented in `verification/phase-4-mitigation-1.md`.
+
+Given this finding, the proposal narrows the claim. The authenticator-class field becomes a capability filter at challenge-issuance time: credentials whose transports advertise only `["internal"]` are excluded, correctly barring same-device-only authenticators (platform biometrics, Windows Hello). It does not become a guarantee about which device the user signs on.
+
+The proposal retains the field rather than removing it because the capability filter still excludes a real category at issuance time, future platform changes (per-call attestation of the transport actually used at sign time, or stricter `hints` semantics) could promote the filter to a use-time guarantee without protocol churn, and removing the field and re-adding it later would be a breaking change for tool authors who have already opted into class-aware policies.
 
 ### 5.5 Why per-call rather than per-session
 
-- Reasoning.
+Session-level approval primitives — OAuth Authorization (§3.2.2) and step-up (§3.2.3) — cannot bind a signature to a specific call with specific arguments. Once a session holds an access token for some scope, every call within that scope is authorized; there is no point at which the user's authentication binds to "delete the resource at this id" rather than to "any future call to a tool covered by this scope."
+
+Per-call approval changes the granularity. The user's signing gesture certifies one tool invocation with one canonical argument set. A user who has authorized a session for `files:write` has not authorized "delete /etc/passwd"; the second decision is its own signed event, with its own action hash, its own challenge, and its own opportunity for the user to refuse. This is the property §3.3 names as the gap: per-call, argument-bound human approval that no session-level primitive provides.
+
+Per-call approval does not replace session-level authorization; the two compose, as §4.11 describes.
 
 ### 5.6 Why method-agnostic envelope with WebAuthn as first profile
 
-- Reasoning.
+The evidence envelope `ApprovalEvidence` (§4.5) is designed as method-discriminated to make future expansion additive. Today the schema permits any string for `method`, and the server enforces conformance at runtime — only `"webauthn"` is accepted; other values are rejected with the `unsupported_method` reason from §4.10. The schema is intentionally permissive on input so the runtime discriminator can produce a precise rejection rather than a generic schema-parse failure.
+
+When a second method profile is defined — a delegated approval session, a hardware-token-only flow, an OIDC step-up bound to per-call evidence — tightening the schema to a discriminated union over the now-multiple conformant values is an additive change. Read sites that already pattern-match on `method` are prepared for the discrimination; nothing needs to widen.
+
+The cost of designing for extensibility was minimal: one literal-string runtime check and one error reason. The cost of retrofitting an undiscriminated envelope later would touch every consumer's read site, every implementation's evidence-parsing code, and every tool author who treats the envelope as fixed-shape.
 
 ### 5.7 Considered alternatives and why rejected
 
-- TOTP, push notifications, OIDC step-up, plain elicitation URL mode.
+The proposal selects WebAuthn over a number of adjacent primitives that solve adjacent problems. Each was considered; none addresses the four-word gap of §3.3.
+
+**TOTP (time-based one-time passwords).** TOTP authenticates a user within a time window — "the person holding this seed at this minute." It is unbound to specific actions: a TOTP code does not certify what the user approved, only that they were present. Using TOTP as an approval primitive collapses to "user is online during this minute," which the agent driving the LLM loop can satisfy at any moment. TOTP is an authentication primitive, not an approval primitive.
+
+**Push notifications (Duo-style).** A push to a registered phone app would let the user see and approve each call on a device the client cannot drive. The mechanism depends on the user having a registered out-of-band channel — a managed app, a working SMS path, an email address routed to a device the user reads. For an MCP server that may run as a stdio binary on a developer's laptop, requiring per-deployment registration of an additional channel is operationally heavy. WebAuthn's "the device the user is on right now" model is lighter-weight for the typical deployment.
+
+**OIDC step-up authentication.** Step-up is session-scoped (§3.2.3): it raises the privileges a session holds, not the authorization on an individual call within the session. Step-up answers "is this user willing to re-authenticate for higher privileges?"; verified approval answers "did this user approve this specific call with these specific arguments?" The two questions have different answers and different threat models.
+
+**Plain elicitation URL mode.** URL-mode elicitation directs the user to a server-hosted URL for sensitive interactions (§3.2.5). It collects information *into* the server (credentials entered into a webpage); the resulting token or stored credential is reusable across subsequent calls. There is no protocol-level tie between one URL-mode authorization and one tool invocation, which is the exact property argument-binding requires.
+
+Each of these primitives is real and useful for its actual purpose. The proposal selects WebAuthn because it produces a cryptographic signature bound to a value the server controls — and that value can carry the action hash.
 
 ## 6. Backward Compatibility
 
