@@ -28,38 +28,52 @@ The proposal delivers cryptographically verified argument-binding, freshness, an
 
 ### 3.1 The threat surface
 
-- Agentic MCP tool calls execute autonomously within an authorized session. Some tools (trades, deletions, deployments, payments) have consequences that justify per-call human consent.
-- The existing UX pattern — client-rendered confirmation prompt — collapses against compromised clients, auto-approve modes, and prompt-injected approval flows.
+A tool that places trades. A tool that deletes files. A tool that deploys to production. A tool that transfers money. These calls share a property: the wrong invocation is not a wrong answer the user can ignore — it is a state change that has already happened by the time anyone notices. For tools in this class, per-call human consent is reasonable.
+
+The standard UX for that consent is a confirmation dialog rendered by the MCP client: a modal that names the tool, summarizes the arguments, and waits for a click. As an enforcement primitive, the dialog collapses under several common conditions:
+
+- **Auto-approve modes**, where the user has pre-approved sessions of arbitrary tool use — the dialog never appears.
+- **Compromised clients**, where the agent driving the LLM loop is the same process that owns the dialog and can dismiss it programmatically.
+- **Prompt injection**, where a malicious tool output instructs the agent to "click yes" and the agent complies as if a user had.
+- **Habitual confirmation**, where a user has clicked yes hundreds of times and clicks yes again without reading.
+
+In each case the agent is, in effect, approving its own prompts.
 
 ### 3.2 What MCP currently provides, and why each is insufficient
 
 #### 3.2.1 Tool annotations (destructiveHint, etc.)
 
-- Advisory, no enforcement primitive.
+The MCP base spec defines tool annotations — `destructiveHint`, `readOnlyHint`, `idempotentHint`, `openWorldHint` — as advisory hints. The spec gives clients no obligation to surface them and no normative behavior tied to them. They are a UI affordance: a destructive-tool icon, a confirmation prompt the client may or may not render. Annotations cannot enforce a security boundary because nothing in the spec compels the client to act on them, and the client is exactly the component the threat model questions.
 
 #### 3.2.2 OAuth Authorization
 
-- Session-level, not per-call.
+The MCP [authorization spec](https://modelcontextprotocol.io/specification/draft/basic/authorization) defines session-level authorization: the user authorizes the client→server connection once, the client receives an access token, and subsequent tool calls present that token. There is no per-call human-consent mechanism. Once authorized, a client can invoke any tool the server exposes any number of times without further user interaction. Authorization answers "may this client connect" — not "did the user approve this call."
 
 #### 3.2.3 Step-up authorization
 
-- Escalates scopes, not individual approvals.
+The authorization spec includes a step-up flow: a tool call may return `403` with `insufficient_scope`, prompting the client to re-authorize for additional scopes. Step-up changes the *scope* the session holds, not the *individual approvals* within it. Once stepped up to `files:write`, the client can perform any number of file writes with no further interaction. The granularity is sustained access, not single actions.
 
 #### 3.2.4 Elicitation, form mode
 
-- Schema-validated input through the client.
+The MCP [elicitation spec](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) defines a form mode for collecting structured input from the user through the client: a username, a date range, a free-text comment. The spec explicitly forbids form-mode elicitation for sensitive data such as passwords or credentials. Form mode is a routine-input mechanism, not an approval mechanism, and the data passes through the same client whose trustworthiness is in question.
 
 #### 3.2.5 Elicitation, URL mode
 
-- Out-of-band, but for collecting info into the server, not consent for actions out of it; no argument binding.
+URL-mode elicitation is the closest existing primitive. It directs the user to an external URL for sensitive interactions that "must not pass through the MCP client" — authentication redirects, payment flows, credential collection. It differs structurally from per-call approval in three ways. First, it collects information *into* the server (credentials entered into a webpage), while per-call approval collects consent *for an action out of* the server. Second, it produces no argument-binding: the resulting token is reusable across subsequent calls, with no protocol-level tie between one authorization and one tool invocation. Third, it requires the server to host an externally reachable URL, while per-call approval works for any MCP server, including stdio-only servers. The two address adjacent but distinct problems and can coexist.
 
 ### 3.3 The specific gap
 
-- Per-call, argument-bound, cryptographically verified human approval — no existing primitive provides this.
+The gap is precise: per-call, argument-bound, cryptographically verified human approval. Each word rules out a different existing primitive. *Per-call* rules out OAuth and step-up authorization, which grant sustained access whose granularity is the session or the scope, not the invocation. *Argument-bound* rules out URL-mode elicitation, which can authenticate a user but cannot tie the result to a specific tool call with specific arguments. *Cryptographically verified* rules out tool annotations and form-mode elicitation, neither of which produces a signature the server can check. *Human approval* rules out anything signed by the agent itself, by an automated token, or by software-only flows with no separate human gesture. No existing MCP primitive satisfies all four conditions.
+
+The gap has been raised in the community before. In discussion #581 (September 2025), rjcorwin asked how a user running an agent with filesystem access can guarantee the agent will not malfunction and delete all of the user's files, observing that the problem is solvable at the adapter or application layer but would be cleaner baked into the protocol. No formal protocol response followed.
 
 ### 3.4 Why it matters now
 
-- Brief: agentic deployments scaling, money/infra/data tools proliferating, prompt injection landscape maturing. Cite the four discussions Theaxiom referenced.
+The landscape that motivates this gap has shifted. MCP servers now connect LLM agents to financial APIs, cloud infrastructure, file systems, payment processors, internal datastores, and outbound communication channels. The blast radius of a compromised agent is no longer "wrong text generated" — it is money moved, infrastructure modified, customer data deleted, messages sent under the user's identity. Prompt injection has matured into a routine operational concern: tool outputs are untrusted input, and any guidance an agent reads from a tool result is potentially adversarial. The combination of higher-stakes tools and untrusted outputs means an MCP client now operates under a threat model of actively adversarial input under autonomous execution.
+
+The gap has been recognized in prior community discussions. Discussions #581 (rjcorwin, "Guarantee human-in-the-loop with cryptographically signed approvals for MCP requests"), #594 (jmfloreszazo's ExecutionGateway with runtime authorization), and #668 (titoparizotto's scope filtering, with Starlight143's comment articulating the discovery-versus-execution distinction) gesture at the gap from different angles. A more recent proposal at #689 (Secure Model Context Protocol, SMCP) addresses agent identity and capability scoping with per-call envelope signatures from the agent's ephemeral key — a complementary security primitive that does not certify human consent. SMCP and per-call human approval compose cleanly: the former proves which agent is making a call; the latter proves which human approved it. The gap rjcorwin articulated in #581 — cryptographically signed approvals from the human, not the agent — has remained open through the subsequent year of MCP security proposals.
+
+The rest of this document defines the mechanism. The Specification section defines a tool-side annotation that marks a tool as requiring approval, a server-issued challenge whose value includes a hash of the canonicalized arguments, a WebAuthn ceremony that produces a signature bound to that challenge, and server-side verification that recomputes the action hash from the actual call and rejects on mismatch. The proposal is structurally additive: tools that do not carry the annotation behave exactly as they do today, and clients that do not implement the ceremony interact with non-annotated tools exactly as they do today. The new behavior applies only when the annotation is present.
 
 ## 4. Specification
 
