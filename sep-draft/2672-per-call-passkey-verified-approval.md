@@ -42,7 +42,7 @@ The MCP [authorization spec](https://modelcontextprotocol.io/specification/draft
 
 #### 3.2.3 Step-up authorization
 
-The authorization spec includes a step-up flow: a tool call may return `403` with `insufficient_scope`, prompting the client to re-authorize for additional scopes. Step-up changes the *scope* the session holds, not the *individual approvals* within it. Once stepped up to `files:write`, the client can perform any number of file writes with no further interaction. The granularity is sustained access, not single actions.
+The authorization spec includes a step-up flow: a tool call may return `403` with `insufficient_scope`, prompting the client to re-authorize for additional scopes. Step-up changes the _scope_ the session holds, not the _individual approvals_ within it. Once stepped up to `files:write`, the client can perform any number of file writes with no further interaction. The granularity is sustained access, not single actions.
 
 #### 3.2.4 Elicitation, form mode
 
@@ -50,11 +50,11 @@ The MCP [elicitation spec](https://modelcontextprotocol.io/specification/2025-11
 
 #### 3.2.5 Elicitation, URL mode
 
-URL-mode elicitation is the closest existing primitive. It directs the user to an external URL for sensitive interactions that "must not pass through the MCP client" — authentication redirects, payment flows, credential collection. It differs structurally from per-call approval in three ways. First, it collects information *into* the server (credentials entered into a webpage), while per-call approval collects consent *for an action out of* the server. Second, it produces no argument-binding: the resulting token is reusable across subsequent calls, with no protocol-level tie between one authorization and one tool invocation. Third, it requires the server to host an externally reachable URL, while per-call approval works for any MCP server, including stdio-only servers. The two address adjacent but distinct problems and can coexist.
+URL-mode elicitation is the closest existing primitive. It directs the user to an external URL for sensitive interactions that "must not pass through the MCP client" — authentication redirects, payment flows, credential collection. It differs structurally from per-call approval in three ways. First, it collects information _into_ the server (credentials entered into a webpage), while per-call approval collects consent _for an action out of_ the server. Second, it produces no argument-binding: the resulting token is reusable across subsequent calls, with no protocol-level tie between one authorization and one tool invocation. Third, it requires the server to host an externally reachable URL, while per-call approval works for any MCP server, including stdio-only servers. The two address adjacent but distinct problems and can coexist.
 
 ### 3.3 The specific gap
 
-The gap is precise: per-call, argument-bound, cryptographically verified human approval. Each word rules out a different existing primitive. *Per-call* rules out OAuth and step-up authorization, which grant sustained access whose granularity is the session or the scope, not the invocation. *Argument-bound* rules out URL-mode elicitation, which can authenticate a user but cannot tie the result to a specific tool call with specific arguments. *Cryptographically verified* rules out tool annotations and form-mode elicitation, neither of which produces a signature the server can check. *Human approval* rules out anything signed by the agent itself, by an automated token, or by software-only flows with no separate human gesture. No existing MCP primitive satisfies all four conditions.
+The gap is precise: per-call, argument-bound, cryptographically verified human approval. Each word rules out a different existing primitive. _Per-call_ rules out OAuth and step-up authorization, which grant sustained access whose granularity is the session or the scope, not the invocation. _Argument-bound_ rules out URL-mode elicitation, which can authenticate a user but cannot tie the result to a specific tool call with specific arguments. _Cryptographically verified_ rules out tool annotations and form-mode elicitation, neither of which produces a signature the server can check. _Human approval_ rules out anything signed by the agent itself, by an automated token, or by software-only flows with no separate human gesture. No existing MCP primitive satisfies all four conditions.
 
 ### 3.4 Why it matters now
 
@@ -103,7 +103,7 @@ sequenceDiagram
     Server-->>Client: tool result (or structured approval error)
 ```
 
-The ceremony delivers three load-bearing properties. The signature certifies the specific canonicalized arguments (*argument-binding*), so swapping arguments between the user gesture and the server call fails verification. Challenges expire and are single-use (*freshness*), so a captured assertion cannot be reused beyond its issued challenge. The tool's declared authenticator class is enforced at enrollment and at challenge issuance (*capability filtering*). §8 documents the threat-model boundaries of these properties and the known residual risks.
+The ceremony delivers three load-bearing properties. The signature certifies the specific canonicalized arguments (_argument-binding_), so swapping arguments between the user gesture and the server call fails verification. Challenges expire and are single-use (_freshness_), so a captured assertion cannot be reused beyond its issued challenge. The tool's declared authenticator class is enforced at enrollment and at challenge issuance (_capability filtering_). §8 documents the threat-model boundaries of these properties and the known residual risks.
 
 ### 4.2 Tool annotation: `tool._meta["io.modelcontextprotocol/verified-approval"]` shape
 
@@ -177,7 +177,7 @@ Normative requirements:
 
 ### 4.4 New methods
 
-This proposal introduces three JSON-RPC methods following the standard MCP method-naming convention — slash-separated, no reverse-DNS prefix because they are spec-level methods rather than vendor extensions. The methods form two ceremonies: *enrollment* (`approval/enroll/begin` and `approval/enroll/finish`, run once per credential) and *challenge issuance* (`approval/challenge/create`, run before each annotated tool call). All three require the server to have declared the verified-approval capability per §4.3; a server that has not declared the capability MUST respond with JSON-RPC error `-32601` ("Method not found") to any of these methods.
+This proposal introduces three JSON-RPC methods following the standard MCP method-naming convention — slash-separated, no reverse-DNS prefix because they are spec-level methods rather than vendor extensions. The methods form two ceremonies: _enrollment_ (`approval/enroll/begin` and `approval/enroll/finish`, run once per credential) and _challenge issuance_ (`approval/challenge/create`, run before each annotated tool call). All three require the server to have declared the verified-approval capability per §4.3; a server that has not declared the capability MUST respond with JSON-RPC error `-32601` ("Method not found") to any of these methods.
 
 #### 4.4.1 `approval/enroll/begin`
 
@@ -201,7 +201,11 @@ This method initiates WebAuthn credential registration. The server constructs th
     "timeout": 300000,
     "attestation": "none",
     "excludeCredentials": [
-      { "type": "public-key", "id": "<base64url credentialId>", "transports": ["usb"] }
+      {
+        "type": "public-key",
+        "id": "<base64url credentialId>",
+        "transports": ["usb"]
+      }
     ],
     "authenticatorSelection": {
       "residentKey": "preferred",
@@ -290,7 +294,11 @@ This method is invoked by the client immediately before each call to a tool requ
     "challenge": "<base64url 64-byte (nonce || actionHash)>",
     "rpId": "example.com",
     "allowCredentials": [
-      { "type": "public-key", "id": "<base64url credentialId>", "transports": ["usb"] }
+      {
+        "type": "public-key",
+        "id": "<base64url credentialId>",
+        "transports": ["usb"]
+      }
     ],
     "userVerification": "required",
     "timeout": 60000
@@ -519,7 +527,7 @@ Verified approval is structurally additive: it composes with existing MCP primit
 
 **OAuth Authorization** (§3.2.2) and verified approval operate at different layers. OAuth establishes that a client may connect to a server at all (session-level). Verified approval establishes that a specific tool call has been authorized by a specific human-bound credential (per-call, argument-bound). Both apply to every approval-required call: OAuth authenticates the connection; verified-approval evidence authorizes the individual call. Neither replaces the other.
 
-**Step-up authorization** (§3.2.3) escalates session *scope*; verified approval escalates a *single call*. The two are not in conflict — a client MAY step up to gain a broader scope and then perform many calls under it, with only those to verified-approval-annotated tools requiring per-call evidence. Step-up affects what a session may do; verified approval affects which individual actions within a permitted session are authorized.
+**Step-up authorization** (§3.2.3) escalates session _scope_; verified approval escalates a _single call_. The two are not in conflict — a client MAY step up to gain a broader scope and then perform many calls under it, with only those to verified-approval-annotated tools requiring per-call evidence. Step-up affects what a session may do; verified approval affects which individual actions within a permitted session are authorized.
 
 **Elicitation** (§3.2.4 and §3.2.5) is a routine and out-of-band input mechanism. Form-mode elicitation collects routine input through the client; URL-mode elicitation collects sensitive input out-of-band; verified approval collects per-call human consent for an action. A single server may use all three: elicit routine input via form mode, redirect to a URL for a payment authorization, and require verified approval for the most consequential tool calls. The three address adjacent but distinct problems.
 
@@ -539,7 +547,7 @@ The reference implementation uses `canonicalize@3.0.0` by Erdtman — the author
 
 ### 5.3 Why argument-binding via challenge field, not separate field
 
-The action hash is embedded in the WebAuthn challenge bytes rather than carried as a separate signed field. This is a deliberate use of the WebAuthn signing surface: WebAuthn assertions sign over the challenge value, which is the bytes the server provides and the authenticator passes through to the signing ceremony. Putting the action hash inside the challenge means the WebAuthn signature *is* the argument-binding — there is no separate signing step, no separate field for the server to verify, and no risk that an implementation forgets the second verify and ships a binding-free hole.
+The action hash is embedded in the WebAuthn challenge bytes rather than carried as a separate signed field. This is a deliberate use of the WebAuthn signing surface: WebAuthn assertions sign over the challenge value, which is the bytes the server provides and the authenticator passes through to the signing ceremony. Putting the action hash inside the challenge means the WebAuthn signature _is_ the argument-binding — there is no separate signing step, no separate field for the server to verify, and no risk that an implementation forgets the second verify and ships a binding-free hole.
 
 A natural alternative would have been to carry the action hash as a separate field on the evidence envelope and have the server verify a separate signature over it. This doubles the cryptographic work — the server verifies the WebAuthn assertion AND a separate signature — and introduces a place where an implementation can be subtly wrong. The "two signatures" pattern is also harder to reason about: under what conditions is the second signature trusted? Under what key? The single-signature design avoids these questions.
 
@@ -581,7 +589,7 @@ The proposal selects WebAuthn over a number of adjacent primitives that solve ad
 
 **OIDC step-up authentication.** Step-up is session-scoped (§3.2.3): it raises the privileges a session holds, not the authorization on an individual call within the session. Step-up answers "is this user willing to re-authenticate for higher privileges?"; verified approval answers "did this user approve this specific call with these specific arguments?" The two questions have different answers and different threat models.
 
-**Plain elicitation URL mode.** URL-mode elicitation directs the user to a server-hosted URL for sensitive interactions (§3.2.5). It collects information *into* the server (credentials entered into a webpage); the resulting token or stored credential is reusable across subsequent calls. There is no protocol-level tie between one URL-mode authorization and one tool invocation, which is the exact property argument-binding requires.
+**Plain elicitation URL mode.** URL-mode elicitation directs the user to a server-hosted URL for sensitive interactions (§3.2.5). It collects information _into_ the server (credentials entered into a webpage); the resulting token or stored credential is reusable across subsequent calls. There is no protocol-level tie between one URL-mode authorization and one tool invocation, which is the exact property argument-binding requires.
 
 Each of these primitives is real and useful for its actual purpose. The proposal selects WebAuthn because it produces a cryptographic signature bound to a value the server controls — and that value can carry the action hash.
 
@@ -655,7 +663,7 @@ Threat addressed: tools that opt into `cross-platform` exclude same-device-only 
 
 #### 8.3.1 Display tampering for synced credentials
 
-The verified-approval ceremony certifies that *some* user gesture occurred against an enrolled credential. It does not certify that the gesture occurred on a display surface outside the client's control.
+The verified-approval ceremony certifies that _some_ user gesture occurred against an enrolled credential. It does not certify that the gesture occurred on a display surface outside the client's control.
 
 For synced credentials advertising `["hybrid", "internal"]` (typical of iCloud Keychain and Google Password Manager passkeys), the OS picker presents the local presentation path on the device hosting the client. A compromised client driving that path can display one action description as `displayText` while the signature certifies the argument-bound hash. Empirical confirmation in `verification/phase-4-mitigation-1.md`: WebAuthn Level 3 `hints: ["hybrid"]` is a no-op on macOS 26.4.1 with Safari 26.4 and Chrome 147; the system picker presents the local credential regardless.
 
@@ -714,5 +722,3 @@ The reference implementation invokes the WebAuthn ceremony through `navigator.cr
 ## Reference Implementation
 
 The reference implementation is a TypeScript library at `mcp-verified-approval` (https://github.com/pinialt/mcp-verified-approval) exposing `./shared`, `./server`, and `./client` subpath exports, with three workspace consumers: a Node MCP server demo, a browser-based client demo, and an in-process integration suite. The library API mirrors the spec's normative shape — `createApprovalGate` for server registration, `createApprovalClient` for client-side ceremony, the `ApprovalErrorReason` typed union matching §4.10's enumeration, and `_meta` key constants matching §4.2 and §4.5. The implementation is hardware-tested against macOS Touch ID and iCloud Keychain synced passkeys (Mac → iPhone via hybrid sync); the integration suite passes 15 tests covering the §4.8 verification rules, §4.4.2 enrollment defenses, §4.10 error reasons, and the per-call ceremony. Per-phase verification reports live in `verification/`.
-
-<!-- No appendices in v1. Test vectors live in the reference implementation. -->
