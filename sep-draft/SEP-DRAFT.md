@@ -389,27 +389,148 @@ Normative requirements:
 
 ### 4.6 Argument canonicalization (RFC 8785) and action-hash construction
 
-- JCS, the hash input, the hash algorithm.
+This proposal uses RFC 8785 (JSON Canonicalization Scheme, JCS) for argument canonicalization. JCS produces a single, deterministic byte sequence for any JSON value, with sorted object keys, normalized number serialization, and UTF-8 NFC normalization where applicable. Both client and server MUST use RFC 8785 verbatim — implementation-specific variants of "deterministic JSON" are non-conformant.
+
+Canonicalization is applied to the validated arguments object that will be passed to the tool's execution handler — the same object processed by the tool's `inputSchema` (defaults applied, type coercions performed) at the MCP layer. Canonicalization is NOT applied to the raw JSON bytes received from the client; clients and servers may differ in how they format that JSON, but the validated logical object canonicalizes to the same bytes on both sides.
+
+The action hash binds three inputs — the tool name, the canonicalized arguments, and the per-server identifier — into a single 32-byte SHA-256 digest:
+
+```
+actionHashBytes = SHA-256( utf8(toolName) || 0x00
+                           || utf8(canonicalArgsJson) || 0x00
+                           || utf8(serverId) )                  // 32 bytes
+```
+
+The 0x00 byte separates the three fields. A 0x00 byte cannot appear inside a valid UTF-8 identifier or inside JCS output of a JSON value, so the separator is unambiguous: no input could blur the boundaries between fields. The wire challenge bytes (`nonce || actionHash`, base64url-encoded into the WebAuthn challenge field) are constructed per §4.4.3.
+
+`serverId` is an implementation-defined per-server identifier baked into the hash so a challenge issued by server A cannot be replayed against server B even if both have enrolled the same credential. Implementations MAY derive `serverId` from the OAuth issuer URL, a configured constant, or any other stable per-server string. What matters normatively is that distinct servers produce distinct `serverId` values.
+
+Normative requirements:
+
+- Both client and server MUST use RFC 8785 (JCS) for argument canonicalization.
+- Both MUST use SHA-256 for the action hash.
+- The action hash MUST be computed as `SHA-256(utf8(toolName) || 0x00 || utf8(canonicalArgsJson) || 0x00 || utf8(serverId))` with the 0x00 byte as separator.
+- Servers MUST keep `serverId` stable across the lifetime of issued challenges; rotating `serverId` while challenges are pending invalidates them.
+- Canonicalization MUST be applied to the validated arguments object passed to the tool's execution handler, not to the raw JSON bytes received from the client.
 
 ### 4.7 Authenticator class policy: capability filter
 
-- How class is checked at enrollment, not at use.
+The verified-approval annotation's optional `authenticatorClass` field declares which class of credentials the tool accepts. Two values are defined:
+
+- `"cross-platform"` (the default when `authenticatorClass` is omitted): credentials whose stored transports include at least one of `hybrid`, `usb`, `nfc`, or `ble` are eligible. Credentials whose transports are exclusively `["internal"]` (same-device-only authenticators such as platform biometrics) are excluded.
+- `"platform"`: any enrolled credential is eligible, including same-device-only authenticators.
+
+The filter is applied at two points in the ceremony:
+
+- At enrollment-time, via the registration-options `authenticatorSelection` constraints.
+- At challenge-issuance time, via the `allowCredentials` list on the WebAuthn assertion options. Credentials whose transports do not satisfy the policy are excluded from `allowCredentials`, so the browser will not invoke them for signing.
+
+This is a CAPABILITY filter, not a use-time guarantee. The cross-platform policy excludes credentials advertised as same-device-only; it does not constrain which device the user actually signs on. With synced-credential providers (iCloud Keychain, Google Password Manager, etc.), a credential whose transports include both `"hybrid"` and `"internal"` is locally usable on the device hosting the client, and the OS picker may present the local presentation path regardless of server-issued WebAuthn hints. The cross-platform filter correctly excludes the underlying credential class that exists ONLY on the client device; it does not exclude credentials that exist on a separate device but are also synced and locally usable. Mitigating display-tampering on synced credentials requires platform-side changes (per-call attestation of the transport actually used at sign time, out-of-band confirmation channels, etc.) and is documented as Future Work in §8.4.
+
+Normative requirements:
+
+- When `authenticatorClass` is `"cross-platform"` or omitted, servers MUST exclude credentials from `allowCredentials` whose stored transports are exclusively `["internal"]`.
+- When `authenticatorClass` is `"platform"`, servers MUST accept any enrolled credential.
+- Servers MUST apply the filter both at enrollment-time and at challenge-issuance time per the two-point flow above.
+- The filter has no client-side normative requirement; clients are not expected to participate in or replicate the policy check.
 
 ### 4.8 Server verification rules (normative MUST list)
 
-- Bullet list of MUSTs for the server.
+Servers MUST perform the following checks in order when handling a `tools/call` request to a tool carrying the verified-approval annotation. Each check has a corresponding §4.10 reason; on failure, the server MUST reject with that reason and MUST NOT proceed to subsequent checks.
+
+1. Evidence MUST be present at `params._meta["io.modelcontextprotocol/verified-approval"]`. Missing → `missing_evidence`.
+2. Evidence MUST be a well-formed object with `method`, `challengeId`, and `response`. Malformed → `missing_evidence`.
+3. `evidence.method` MUST be `"webauthn"`. Other → `unsupported_method`.
+4. The challenge `evidence.challengeId` MUST be known. Unknown → `challenge_unknown`.
+5. The challenge MUST NOT have been consumed. Consumed → `challenge_consumed`.
+6. The challenge MUST NOT have expired (current time < `expiresAt`). Expired → `challenge_expired`.
+7. The challenge MUST have been issued for the tool currently being invoked. Mismatch → `challenge_wrong_tool`.
+8. The credential `evidence.response.id` MUST be enrolled. Unknown → `unknown_credential`.
+9. The credential's transports MUST satisfy the tool's `authenticatorClass` policy per §4.7. Mismatch → `authenticator_class_mismatch`.
+10. The WebAuthn signature MUST verify against the credential's stored public key. Failed → `signature_verification_failed`.
+11. The credential's signCount MUST be strictly greater than the stored counter when the stored counter is greater than zero (a stored counter of zero disables this check, per WebAuthn L3, accommodating synced credentials that do not maintain a counter). Regression → `signature_counter_regression`.
+12. The action hash recomputed from `(toolName, canonicalArguments, serverId)` per §4.6 MUST equal the action hash committed in the issued challenge. Mismatch → `argument_hash_mismatch`.
+13. The challenge MUST be atomically consumed after all preceding checks succeed. Consume-then-verify implementations are non-conformant — a captured assertion replayed against a still-valid challenge would consume the challenge before the failing verification surfaces, leaving the legitimate next call unable to use it.
+14. The credential's stored counter MUST be updated to the value reported in the assertion.
+
+The order of these checks is normative for steps 1-13. Verification (1-12) MUST precede consumption (13). The challenge-state checks (4-7) follow the order unknown → consumed → expired → wrong-tool to give callers the most specific reason available.
+
+Successful completion of steps 1-14 produces a binary result: the verification ceremony returns without throwing. This result is the verified-approval primitive's deliverable. The tool's execution itself is NOT part of this ceremony; the server's `tools/call` handler — typically a thin layer above the gate — is responsible for invoking the tool's execute handler only after verification returns successfully. This separation makes clear what the proposal delivers (a binary attestation that this specific call is authorized) and what it does not deliver (the execution itself, which remains the caller's domain and may have its own failure modes unrelated to approval).
 
 ### 4.9 Client behavior rules (normative MUST list)
 
-- Bullet list of MUSTs for the client.
+This subsection consolidates client-side normative requirements introduced in earlier subsections; cross-references identify the originating subsection.
+
+- Clients MUST detect tools carrying the verified-approval annotation per §4.2.
+- Clients MUST NOT invoke an approval-required tool without first requesting a challenge via `approval/challenge/create` per §4.4.3.
+- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion per §4.4.3. Transformations of `displayText` (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets.
+- Clients MUST invoke the WebAuthn assertion only after the user has reviewed `displayText`.
+- Clients MUST forward the WebAuthn assertion response unmodified per §4.5.
+- Clients MUST attach the assertion evidence at `params._meta["io.modelcontextprotocol/verified-approval"]` on the `tools/call` request per §4.5.
+- Clients MUST NOT reuse a `challengeId` across `tools/call` invocations per §4.5; each `challengeId` is bound to exactly one call.
+- Clients SHOULD surface §4.10 errors to the user with appropriate context. The specific UX is implementation-defined; this is a SHOULD because the choice of presentation (modal, toast, log entry) depends on the client's broader interface conventions.
 
 ### 4.10 Error codes and reasons
 
-- Enumerated codes and structured reasons.
+All approval-domain rejections use the JSON-RPC error code `-32001` — a server-defined error code in the range reserved for application-specific errors. The error structure follows JSON-RPC convention: a top-level `error` object with `code`, a human-readable `message`, and a structured `data` object containing a `reason` field. The `reason` field is the canonical machine-readable discriminator; clients SHOULD branch on it rather than parsing `message`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "<request id>",
+  "error": {
+    "code": -32001,
+    "message": "Approval evidence does not match the arguments of this call",
+    "data": {
+      "reason": "argument_hash_mismatch"
+    }
+  }
+}
+```
+
+The `reason` field carries one of the values enumerated below, grouped by the path that emits it.
+
+**Per-call assertion path** (emitted during `tools/call` verification, §4.8):
+
+- `missing_evidence` — evidence is missing from `params._meta` or its shape is malformed.
+- `unsupported_method` — `evidence.method` is not `"webauthn"`.
+- `challenge_unknown` — `challengeId` does not match any pending challenge.
+- `challenge_consumed` — the challenge has already been used.
+- `challenge_expired` — the challenge's `expiresAt` has passed.
+- `challenge_wrong_tool` — the challenge was issued for a different tool.
+- `unknown_credential` — the credential identified in the assertion is not enrolled.
+- `authenticator_class_mismatch` — the credential's class does not satisfy the tool's policy.
+- `signature_verification_failed` — WebAuthn signature verification failed.
+- `signature_counter_regression` — the credential's signCount did not strictly increase.
+- `argument_hash_mismatch` — the recomputed action hash does not match the challenge's committed hash.
+
+**Challenge issuance** (emitted by `approval/challenge/create`, §4.4.3):
+
+- `tool_not_approved_required` — challenge requested for a tool not registered as approval-required.
+- `no_eligible_credential` — no enrolled credentials satisfy the tool's `authenticatorClass` policy.
+
+**Enrollment finish** (emitted by `approval/enroll/finish`, §4.4.2):
+
+- `credential_already_enrolled` — re-enrollment of an already-enrolled credentialId.
+- `no_pending_enrollment` — no `approval/enroll/begin` was called or its challenge expired.
+- `verification_failed` — WebAuthn registration verification failed.
+
+Normative requirements:
+
+- Servers MUST use code `-32001` for all approval-domain rejections.
+- Servers MUST include a `reason` field in `data` from the enumerated set above.
+- Servers MAY include additional fields in `data` for diagnostic purposes (timestamps, counter values, etc.). Clients MUST NOT depend on additional fields beyond `reason`.
+- Implementations MAY localize `message`. The `reason` field is the canonical machine-readable identifier and MUST NOT be localized.
 
 ### 4.11 Security relationship to existing primitives
 
-- Composes with OAuth Authorization, distinct from URL mode elicitation.
+Verified approval is structurally additive: it composes with existing MCP primitives without conflict.
+
+**OAuth Authorization** (§3.2.2) and verified approval operate at different layers. OAuth establishes that a client may connect to a server at all (session-level). Verified approval establishes that a specific tool call has been authorized by a specific human-bound credential (per-call, argument-bound). Both apply to every approval-required call: OAuth authenticates the connection; verified-approval evidence authorizes the individual call. Neither replaces the other.
+
+**Step-up authorization** (§3.2.3) escalates session *scope*; verified approval escalates a *single call*. The two are not in conflict — a client MAY step up to gain a broader scope and then perform many calls under it, with only those to verified-approval-annotated tools requiring per-call evidence. Step-up affects what a session may do; verified approval affects which individual actions within a permitted session are authorized.
+
+**Elicitation** (§3.2.4 and §3.2.5) is a routine and out-of-band input mechanism. Form-mode elicitation collects routine input through the client; URL-mode elicitation collects sensitive input out-of-band; verified approval collects per-call human consent for an action. A single server may use all three: elicit routine input via form mode, redirect to a URL for a payment authorization, and require verified approval for the most consequential tool calls. The three address adjacent but distinct problems.
 
 ## 5. Rationale
 
