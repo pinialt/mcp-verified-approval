@@ -10,7 +10,7 @@ MCP today provides advisory tool annotations (`destructiveHint`, `readOnlyHint`,
 
 ## The proposal
 
-Servers mark sensitive tools with a `_meta.verifiedApproval/required: "verified"` annotation. Before invoking such a tool, clients must:
+Servers mark sensitive tools by setting `_meta["io.modelcontextprotocol/verified-approval"] = { required: "verified" }` on the tool listing (with an optional `authenticatorClass` field). Before invoking such a tool, clients must:
 1. Request a per-call challenge from the server (`approval/challenge/create`).
 2. Obtain a cryptographic signature from a separate authenticator (passkey on a phone, hardware key) bound to a hash of `(toolName, canonicalArguments, serverId)`.
 3. Submit the evidence with the tool call (`tools/call` with `params._meta["io.modelcontextprotocol/verified-approval"]`).
@@ -22,7 +22,7 @@ The novelty over standard WebAuthn is the argument-binding: the signature certif
 ## Scope decisions
 
 - **Method-agnostic envelope, WebAuthn as first profile.** The protocol defines an evidence shape with a `method` discriminator. Phase 1–4 implement and ship `webauthn` as the only conformant method; future methods can be added without spec churn.
-- **Roaming authenticator required for high-sensitivity tools.** The threat model assumes a compromised client; the security argument therefore requires a separate device (phone passkey via hybrid transport) rather than a same-device biometric. Same-device authenticators may be acceptable for medium-sensitivity tools — TBD in spec.
+- **Authenticator-class policy as a capability filter.** High-sensitivity tools default to `authenticatorClass: "cross-platform"`, which excludes credentials whose transports advertise only `["internal"]` (same-device-only) at enrollment and at challenge issuance. This is a capability filter at enrollment time, not a guarantee about which device the user actually signs on. Synced credentials may be presented locally and still satisfy the filter; mitigating that requires platform-side changes documented as future work. Tools may opt into `authenticatorClass: "platform"` to accept any enrolled credential. See DECISIONS.md "Authenticator class policy" for what this delivers and what it does not.
 - **`_meta` placement, not `annotations`.** Both the tool-side requirement flag and the request-side evidence live in `_meta`. Reasoning: `annotations` is defined by the spec as advisory; our field is normative. `_meta` is the spec-sanctioned extension namespace and matches how the SDK itself layers `progressToken` and `io.modelcontextprotocol/related-task`.
 - **One canonicalization algorithm: RFC 8785 (JCS).** Via `canonicalize@3.0.0` by Erdtman (RFC author).
 - **Single dangerous tool in the demo: `place_trade`.** Vivid for demos, no external integrations needed. The whole point is the approval ceremony, not the trading logic.
@@ -36,7 +36,7 @@ The novelty over standard WebAuthn is the argument-binding: the signature certif
 
 ## Architecture (locked from Phase 0)
 
-- **Stack:** TypeScript monorepo, npm workspaces. `shared/`, `server/`, `client/`.
+- **Stack:** TypeScript monorepo, npm workspaces. Library: `mcp-verified-approval/` (with `shared`, `server`, `client` subpath exports). Demo app: `shared/`, `server/`, `client/` workspaces consuming the library.
 - **MCP SDK:** `@modelcontextprotocol/sdk@1.29.0`.
 - **Transport:** `StreamableHTTPServerTransport` (server) / `StreamableHTTPClientTransport` (client). Stateful sessions via `Mcp-Session-Id`.
 - **Server:** Node, port 3030 (3000 was in use locally during Phase 0). Exposes `place_trade` plus a debug `GET /trades` endpoint. In-memory state only.
@@ -44,16 +44,21 @@ The novelty over standard WebAuthn is the argument-binding: the signature certif
 - **CORS:** Pinned to `http://localhost:5173` with allowed methods `GET, POST, DELETE, OPTIONS` and headers including `mcp-session-id` and `mcp-protocol-version`.
 - **Tests:** vitest. Real server on a random port, real client. No mocks for protocol behavior.
 
-## Repository structureshared/        Types and helpers used by both sides.
-server/        MCP server implementation.
-server/test/   vitest tests against a real server instance.
-client/        Browser-based MCP client.
-scripts/       e2e harnesses driven via CDP.
-verification/  Per-phase verification reports (evidence for the eventual SEP).
-sep-draft/     Eventual SEP markdown draft.
-DECISIONS.md   Running log of design decisions with rationale.
-PROJECT.md     This file.
-ROADMAP.md     Phases, status, pending tasks.
+## Repository structure
+
+```
+mcp-verified-approval/   Reference library (shared / server / client subpath exports).
+shared/                  Types and helpers used by both demo workspaces.
+server/                  Demo MCP server consuming the library.
+server/test/             vitest tests against a real server instance.
+client/                  Browser-based demo MCP client.
+scripts/                 e2e harnesses driven via CDP.
+verification/            Per-phase verification reports (evidence for the eventual SEP).
+sep-draft/               SEP markdown draft.
+docs/DECISIONS.md        Running log of design decisions with rationale.
+docs/project.md          This file.
+docs/roadmap.md          Phases, status, pending tasks.
+```
 
 ## Tagged anchors
 
