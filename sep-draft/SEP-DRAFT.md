@@ -20,7 +20,7 @@ Updates: TBD
 
 The Model Context Protocol provides advisory tool annotations and session-level authorization, but no mechanism for cryptographically verifying that a specific human consented to a specific tool invocation with specific arguments. For tool calls with high-stakes consequences — placing trades, deploying infrastructure, deleting data — a confirmation rendered by a potentially compromised client is insufficient: an agent driving the same client can approve its own prompts.
 
-This proposal introduces per-call verified approval. Tools mark themselves as requiring approval via a `_meta.verifiedApproval` annotation. Before invoking such a tool, the client requests a server-issued challenge whose value includes a hash of the canonicalized arguments. The user authorizes the call through a WebAuthn assertion bound to that challenge. The server independently verifies the signature, recomputes the action hash from the actual tool-call arguments, and rejects mismatches. The ceremony composes additively with existing MCP primitives: OAuth Authorization remains session-level; tool annotations remain advisory unless this proposal's annotation is present; elicitation remains the mechanism for routine and out-of-band data flows.
+This proposal introduces per-call verified approval. Tools mark themselves as requiring approval via the `_meta` annotation under the `io.modelcontextprotocol/verified-approval` key. Before invoking such a tool, the client requests a server-issued challenge whose value includes a hash of the canonicalized arguments. The user authorizes the call through a WebAuthn assertion bound to that challenge. The server independently verifies the signature, recomputes the action hash from the actual tool-call arguments, and rejects mismatches. The ceremony composes additively with existing MCP primitives: OAuth Authorization remains session-level; tool annotations remain advisory unless this proposal's annotation is present; elicitation remains the mechanism for routine and out-of-band data flows.
 
 The proposal delivers cryptographically verified argument-binding, freshness, and single-use enforcement. It does not, on its own, defend against display-tampering attacks on synced credentials (per-call gestures may occur on the same device the client controls); the Security Implications section documents this residual risk and proposes future work. The reference implementation includes hardware-tested end-to-end ceremony, server-side verification, and a discriminated-outcome client API.
 
@@ -79,7 +79,7 @@ The rest of this document defines the mechanism. The Specification section defin
 
 - High-level walkthrough of the end-to-end flow.
 
-### 4.2 Tool annotation: `_meta.verifiedApproval` shape
+### 4.2 Tool annotation: `tool._meta["io.modelcontextprotocol/verified-approval"]` shape
 
 - Field definitions and example.
 
@@ -101,7 +101,7 @@ The rest of this document defines the mechanism. The Specification section defin
 
 - Request/response shape, semantics.
 
-### 4.5 Evidence on `tools/call`: `params._meta.verifiedApproval`
+### 4.5 Evidence on `tools/call`: `params._meta["io.modelcontextprotocol/verified-approval"]`
 
 - Where the assertion travels, what the server expects.
 
@@ -161,7 +161,7 @@ The rest of this document defines the mechanism. The Specification section defin
 
 ## 6. Backward Compatibility
 
-- Tools without `_meta.verifiedApproval` annotation behave identically.
+- Tools without an `io.modelcontextprotocol/verified-approval` `_meta` annotation behave identically.
 - Clients without `verifiedApproval` capability cannot invoke approval-required tools — the server SHOULD reject with a structured error.
 - Servers SHOULD declare the capability in `initialize`.
 - Migration path: existing tools opt in by adding the annotation.
