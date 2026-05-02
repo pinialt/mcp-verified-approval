@@ -34,7 +34,7 @@ The library at `mcp-verified-approval/` is the canonical surface — server gate
 Requires Node ≥ 20.
 
 ```sh
-git clone git@github.com:<your-handle>/mcp-verified-approval.git
+git clone git@github.com:pinialt/mcp-verified-approval.git
 cd mcp-verified-approval
 npm install
 npm test
