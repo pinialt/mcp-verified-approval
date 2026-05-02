@@ -12,7 +12,7 @@ The proposal is structurally additive: tools without the annotation behave exact
 
 ## Status
 
-The SEP is in draft and pre-submission review. The reference implementation is end-to-end working: 15 integration tests cover the §4.8 verification rules, §4.4.2 enrollment defenses, §4.10 error reasons, and the per-call ceremony. The WebAuthn assertion path has been hardware-tested on macOS Touch ID and iCloud Keychain synced passkeys via Mac → iPhone hybrid transport.
+The SEP is open for review at [modelcontextprotocol/modelcontextprotocol#2672](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2672). The reference implementation is end-to-end working: 15 integration tests cover the §4.8 verification rules, §4.4.2 enrollment defenses, §4.10 error reasons, and the per-call ceremony. The WebAuthn assertion path has been hardware-tested on macOS Touch ID and iCloud Keychain synced passkeys via Mac → iPhone hybrid transport.
 
 ## Repository structure
 
