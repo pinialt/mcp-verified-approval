@@ -77,15 +77,112 @@ The rest of this document defines the mechanism. The Specification section defin
 
 ### 4.1 Overview of the ceremony
 
-- High-level walkthrough of the end-to-end flow.
+The verified-approval ceremony binds a single tool invocation to a fresh, server-issued challenge that the user signs through a WebAuthn authenticator. This subsection describes the end-to-end flow; later subsections specify the wire formats, methods, and verification rules.
+
+The flow assumes the server has registered at least one tool whose listing carries the verified-approval annotation (§4.2), the server has declared the `verifiedApproval` capability in its `initialize` response (§4.3), and the user has previously enrolled at least one credential through the enrollment ceremony (§4.4).
+
+When an agent or user requests invocation of an annotated tool, the client requests a challenge from the server via `approval/challenge/create` (§4.4.3), supplying the tool name and the proposed arguments. The server canonicalizes the arguments, computes an action hash bound to `(toolName, canonicalArguments, serverId)` per §4.6, allocates a single-use challenge identifier with an expiration time, and returns a challenge envelope. The wire challenge bytes encode a fresh nonce concatenated with the action hash; the envelope additionally carries `displayText` describing the action, an `expiresAt` timestamp, and the WebAuthn `requestOptions` the client passes to the browser API.
+
+The client presents `displayText` to the user verbatim and invokes a WebAuthn assertion. The user authenticates through whatever gesture the authenticator requires — a biometric, a hardware key tap, or equivalent — producing a signed assertion bound to the wire challenge bytes. The client then invokes `tools/call` with the original arguments and the assertion carried in `params._meta["io.modelcontextprotocol/verified-approval"]` per §4.5.
+
+The server is the verifier. On receiving the call, the server independently performs three checks: (a) it verifies the WebAuthn signature against the credential's stored public key, (b) it recomputes the action hash from the actual call arguments and confirms it matches the hash committed to in the issued challenge, and (c) it atomically consumes the challenge so it cannot be replayed. The order matters: verification precedes consumption, so a call presenting an invalid signature does not consume the challenge it claims to bind. Only after all three checks succeed does the server execute the tool. Any failure rejects with the structured error of §4.10 and the tool is not executed.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client
+    participant Server
+    participant Authenticator
+
+    Note over Client,Server: initialize: server declares verifiedApproval capability
+    Note over User,Authenticator: prerequisite: at least one credential enrolled
+
+    Client->>Server: tools/list
+    Server-->>Client: tool listing with verified-approval _meta annotation
+
+    Client->>Server: approval/challenge/create (toolName, arguments)
+    Server-->>Client: challenge (nonce + actionHash, displayText, expiresAt)
+
+    Client->>User: present displayText
+    User->>Authenticator: gesture (biometric / hardware tap)
+    Authenticator-->>Client: signed assertion bound to challenge
+
+    Client->>Server: tools/call (name, arguments, _meta evidence)
+    Server->>Server: verify signature → recompute action hash → consume challenge
+    Server-->>Client: tool result (or structured approval error)
+```
+
+The ceremony delivers three load-bearing properties. The signature certifies the specific canonicalized arguments (*argument-binding*), so swapping arguments between the user gesture and the server call fails verification. Challenges expire and are single-use (*freshness*), so a captured assertion cannot be reused beyond its issued challenge. The tool's declared authenticator class is enforced at enrollment and at challenge issuance (*capability filtering*). §8 documents the threat-model boundaries of these properties and the known residual risks.
 
 ### 4.2 Tool annotation: `tool._meta["io.modelcontextprotocol/verified-approval"]` shape
 
-- Field definitions and example.
+A server marks a tool as requiring verified approval by setting a value at the namespaced `_meta` key `"io.modelcontextprotocol/verified-approval"` on the tool's listing entry. The value has the following shape:
+
+```typescript
+interface VerifiedApprovalToolMeta {
+  required: "verified";
+  authenticatorClass?: "cross-platform" | "platform";
+}
+```
+
+`required: "verified"` is the literal string that marks the tool as gated. `authenticatorClass`, when present, declares which class of credentials the tool accepts; the semantics of each class are specified in §4.7.
+
+A tool listing carrying this annotation looks as follows on the wire:
+
+```json
+{
+  "name": "delete_resource",
+  "title": "Delete resource",
+  "description": "Permanently delete the resource with the given id.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["resourceId"],
+    "additionalProperties": false,
+    "properties": {
+      "resourceId": { "type": "string", "minLength": 1 }
+    }
+  },
+  "_meta": {
+    "io.modelcontextprotocol/verified-approval": {
+      "required": "verified",
+      "authenticatorClass": "cross-platform"
+    }
+  }
+}
+```
+
+Normative requirements:
+
+- Servers MUST set `required` to the literal string `"verified"` when the tool requires verified approval. Future versions of this specification MAY define additional values.
+- The `authenticatorClass` field is OPTIONAL. When omitted, clients and servers SHOULD treat the policy as `"cross-platform"`.
+- Clients MUST treat tools without this annotation as not requiring verified approval; the tool is invoked as any other tool would be, with no additional ceremony.
+- Servers MAY include additional fields under the `"io.modelcontextprotocol/verified-approval"` namespace key for forward compatibility. Clients MUST NOT reject the annotation because of unknown sibling fields and MUST tolerate them.
 
 ### 4.3 Capability declaration in `initialize`
 
-- How servers and clients advertise support.
+Servers that support the verified-approval extension MUST declare the capability in their `initialize` response. The capability lives under the `extensions` slot of `ServerCapabilities` at the bare key `"verifiedApproval"`:
+
+```json
+{
+  "capabilities": {
+    "tools": {},
+    "extensions": {
+      "verifiedApproval": {}
+    }
+  }
+}
+```
+
+The capability key inside `extensions` is the bare string `"verifiedApproval"` — not the reverse-DNS form used for the `_meta` annotation key. The asymmetry between the closed `extensions` namespace and the open `_meta` namespace is documented in `docs/DECISIONS.md` ("Capability declaration placement under `extensions`"). The empty-object value is the initial declaration shape; future versions of this specification MAY define sub-fields under it.
+
+Normative requirements:
+
+- A server that registers any tool carrying the verified-approval annotation MUST declare this capability in its `initialize` response.
+- A server MAY declare the capability without yet having registered any approval-required tool — for example, in implementations where tools are loaded dynamically post-`initialize`.
+- Declaring the capability commits the server to understanding the methods defined in §4.4 (`approval/enroll/begin`, `approval/enroll/finish`, `approval/challenge/create`) and to accepting and verifying the request-side evidence shape defined in §4.5.
+- Clients MUST tolerate unknown sub-fields under the capability value without rejecting the declaration.
+- If a client invokes a tool whose listing carries the verified-approval annotation against a server that did not declare this capability, behavior is undefined; the inconsistency suggests a server bug. Clients MAY fail loudly or proceed at their own risk.
+- If a client invokes an approval-required tool against a server that declared this capability without including evidence at `params._meta["io.modelcontextprotocol/verified-approval"]`, the server MUST reject the call with the structured error specified in §4.10.
 
 ### 4.4 New methods
 
