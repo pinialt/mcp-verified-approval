@@ -291,65 +291,135 @@ Cancel; in the normal flow the user signs locally on the Apple
 sheet, on the Mac display the (hypothetically compromised) client
 controls.
 
-### Control — Safari, no hint (PENDING)
+### Control — Safari, no hint
 
-To be captured against `main` (which does not emit the `hints` field).
-Same single iCloud-Keychain credential setup. Single-cell question:
-does the Safari picker behave identically to Scenario A (proving the
-hint is moot) or differently (proving the hint suppressed/changed
-something)?
+Server: `main`, which does not emit the `hints` field. Same single
+iCloud-Keychain credential.
 
-### Chrome cross-check (PENDING)
+Visually **identical** to Scenario A in Safari. Same Sign-In sheet,
+same single "Passkey From Passwords" row, same Cancel/Continue
+buttons, no hybrid affordance, no clickable submenu. Continue →
+password prompt → trade success.
 
-Required to disambiguate "Safari is dropping the field" from "Apple's
-system picker ignores the hint." Chrome 147 is well past the L3
-implementation cutoff (Chrome 122) and forwards `hints` to the
-platform. If Chrome on the same Mac shows the same single-option
-sheet as Safari, the conclusion is firmly that Apple's system picker
-is ignoring the hint; if Chrome shows additional options surfaced by
-the hint, the conclusion is that WebKit is dropping the field.
+### Control — Chrome, no hint
 
-User has noted that in Chrome, clicking Cancel on the system Sign-In
-sheet brings up an additional Chrome-internal menu. That suggests
-Chrome's flow has a richer fallback affordance than Safari's, but
-whether it's hint-influenced needs both with-hint and without-hint
-captures to compare.
+Same `main` server. Same iCloud-Keychain credential.
 
-## Preliminary reading — Safari with hint shows no hybrid path
+Visually **identical** to Scenario A in Chrome at every step:
+- Apple system Sign-In sheet shown post-Approve is identical to the
+  Safari sheet.
+- Cancel on the Apple sheet still surfaces Chrome's own browser-
+  rendered fallback modal.
+- Chrome fallback modal still has the same two sections — "On this
+  device" with the Apple Passwords entry and "On other devices" with
+  "Use a phone or tablet". The fallback content does NOT change in
+  the absence of the `hints: ["hybrid"]` field; Chrome surfaces "Use
+  a phone or tablet" regardless of whether the RP sent the hint.
 
-Scenario A in Safari is unambiguous on the narrow question of "does
-the hint cause the picker to surface a hybrid option": **it does
-not**. With `hints: ["hybrid"]` set on the wire and a synced
-credential locally available, Safari/macOS skipped any picker that
-would have offered a cross-device path and went directly to local
-presentation of the credential.
+## Conclusion
 
-This is not yet the full answer — the control run determines whether
-this is "Safari's picker ignores the hint" or "Safari's picker happens
-to skip hybrid for locally-resolvable creds regardless." But on its
-face, the result is consistent with Phase 3 Finding 4's prediction:
-the cross-platform-class capability filter does not deliver use-time
-display-surface separation for synced credentials.
+**Apple's macOS system picker does not respect `hints: ["hybrid"]`
+for an iCloud-Keychain credential that is locally resolvable on the
+same device.** Verified across two browsers (Safari 26.4, Chrome
+147), with-hint and without-hint variants, on macOS 26.4.1. All four
+cells of the experiment showed the same Apple Sign-In sheet —
+locally-presented passkey only, no cross-device path offered.
 
-## SEP framing — preliminary lean
+**Chrome 147's own fallback modal exposes the hybrid path ("Use a
+phone or tablet") under "On other devices" — but does so
+unconditionally, not in response to the hint.** The hint is therefore
+not the mechanism causing the hybrid path to be reachable; Chrome
+simply offers it always. And the fallback only appears post-Cancel,
+which the natural user flow does not reach.
 
-The three-row decision table from the original task plan:
+**The hint is a no-op in this environment.** It is forwarded to the
+platform per the W3C WebAuthn L3 spec, the platform may use it to
+influence picker UI, and on the Mac/Safari/Chrome combinations
+tested today, the platform chooses not to. This is the
+spec-permitted behaviour ("hints are advisory; platforms MAY use
+them"); it is not a bug or a misuse of the field. It is, however,
+not a delivered mitigation.
 
-| Outcome | SEP implication |
-|---|---|
-| Picker skips local for the synced cred when `hints: ["hybrid"]` is set | Hint is a load-bearing mitigation. SEP can keep the display-surface-separation claim, contingent on RP setting hints. |
-| Picker behaviour is identical to control | Hint is advisory and Apple ignores it. SEP must narrow the claim — argument-binding + freshness + single-use are load-bearing; display-surface separation is a capability check, not a use-time guarantee. |
-| Picker partially respects | Mixed; SEP discusses the hint as one ingredient of layered defense, not a guarantee. |
+## SEP framing recommendation
 
-Scenario A's outcome rules out row 1 for Safari at minimum. Rows 2
-and 3 are still in play depending on the control. Final
-recommendation pending control + Chrome captures.
+Of the three branches in the original decision table, the result
+is firmly row 2:
+
+> Picker behaviour is identical to control. Hint is advisory and
+> Apple ignores it. SEP must narrow the claim — argument-binding +
+> freshness + single-use are the load-bearing properties;
+> display-surface separation is a capability check, not a use-time
+> guarantee.
+
+Concrete SEP-text recommendations:
+
+1. **Drop the threat-model claim of use-time display-surface
+   separation for synced-credential installations.** The current
+   DECISIONS.md text in "Authenticator class policy" already softens
+   this in its "What this proposal does NOT deliver" subsection;
+   the SEP should adopt that softer framing as the primary framing,
+   not as a footnote. Phase 4 mitigation 1 has now empirically
+   confirmed that the obvious RP-side lever (`hints`) does not
+   recover the property on Apple/macOS today.
+
+2. **Keep authenticator-class as a capability filter, not a use-time
+   guarantee.** The transport-class check correctly excludes
+   credentials that have no cross-device potential
+   (`["internal"]`-only). That is load-bearing for the threat model
+   in environments where such credentials exist. It just does not
+   force at-call-time cross-device use for credentials that have
+   that capability via iCloud sync.
+
+3. **Re-anchor the proposal's primary claim on argument-binding +
+   freshness + single-use.** Those three properties are delivered
+   end-to-end by the assertion ceremony as implemented and verified
+   in Phase 3, regardless of which transport the OS chose. They are
+   what is genuinely novel relative to existing MCP primitives.
+
+4. **Document the residual display-tampering risk explicitly in the
+   threat-model section.** A compromised client driving an
+   iCloud-synced credential's local presentation can show one
+   action description while signing another, to the limits of the
+   action-binding hash. Future mitigations are open spec questions
+   worth listing (per-call attestation; per-call user-presence
+   evidence on a separate device; out-of-band confirmation channel;
+   secondary signal from the authenticator about which transport
+   was used at sign time — none of which are currently surfaced by
+   the WebAuthn assertion response).
+
+## What to do with the `hints: ["hybrid"]` commit
+
+`f680443` adds one line at the assertion-options site, plus a small
+amount of type plumbing in `shared/`. The empirical conclusion is
+that the line currently does nothing on Apple platforms — it is
+forwarded but ignored by the system picker.
+
+Three options for the user to decide:
+
+1. **Revert.** Keep main lean. Delete dead code that does nothing.
+2. **Keep, with a comment recording the no-op finding.** Spec-correct
+   L3 hint; a future macOS or browser version may honor it; harmless
+   when ignored. The comment is what makes this not "code rot in a
+   month."
+3. **Keep without further comment.** Trust spec-correctness; trust
+   future readers will look up `hints` in WebAuthn L3.
+
+This choice is not yet made; per the brief, DECISIONS.md is
+unchanged and the merge to main is deferred until the user reads
+this report. Recommend option 2 (keep + comment) as the default —
+the cost is one line of code and a few words of comment; the
+benefit is forward compatibility with platforms that may eventually
+honor the hint, AND the comment captures the empirical finding for
+the next author who wonders why the field is there.
 
 ## Status
 
-- Branch `phase-4-mitigation-1-investigation` unmerged.
+- Branch `phase-4-mitigation-1-investigation` unmerged. Two commits:
+  `f680443` (the code change), `4697f81` (this report's pre-control
+  state — about to be amended/extended with the present commit).
 - Tests pass.
 - DECISIONS.md unchanged, per the brief.
-- Scenario A captured (Safari + hint).
-- Control (Safari, no hint) and Chrome cross-checks pending hardware
-  run.
+- All four experimental cells captured: Safari+hint, Chrome+hint,
+  Safari+control, Chrome+control. Result is uniform.
+- SEP framing recommendation: narrow the display-tampering claim;
+  re-anchor on argument-binding + freshness + single-use.
