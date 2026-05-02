@@ -1,9 +1,9 @@
-# SEP-XXXX: Verified Approval for MCP Tool Calls
+# SEP-XXXX: Per-Call Passkey Verified Approval for MCP Tool Calls
 
 ```
 SEP: XXXX
-Title: Verified Approval for MCP Tool Calls
-Author: TBD
+Title: Per-Call Passkey Verified Approval for MCP Tool Calls
+Author: Paul Pini Sherbaum
 Status: Draft
 Type: Standards Track
 Created: 2026-05-02
@@ -326,7 +326,7 @@ Normative requirements:
 - Servers MUST populate `requestOptions.allowCredentials` with the user's enrolled credentials filtered by the tool's `authenticatorClass` policy per §4.7.
 - Servers MUST set `requestOptions.userVerification` to `"required"`.
 - Servers MUST construct `displayText` from a server-side describe function applied to the supplied arguments. The `displayText` MUST be human-readable and accurately describe the action being approved. This is security-relevant — the user's understanding of what they are signing depends on it matching the action hash bound by the same call. See §8 on display tampering for the threat-model boundaries of this guarantee.
-- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion. The displayText is the human-readable surface through which the user reviews the action that the action hash will bind; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets without changing the cryptographic binding.
+- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion. The `displayText` is the human-readable surface through which the user reviews the action that the action hash will bind; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets without changing the cryptographic binding.
 
 ### 4.5 Evidence on `tools/call`: `params._meta["io.modelcontextprotocol/verified-approval"]`
 
@@ -403,7 +403,7 @@ actionHashBytes = SHA-256( utf8(toolName) || 0x00
 
 The 0x00 byte separates the three fields. A 0x00 byte cannot appear inside a valid UTF-8 identifier or inside JCS output of a JSON value, so the separator is unambiguous: no input could blur the boundaries between fields. The wire challenge bytes (`nonce || actionHash`, base64url-encoded into the WebAuthn challenge field) are constructed per §4.4.3.
 
-The action hash binds three inputs because two of them — the tool name and the arguments — are not unique across servers. A user might enroll the same passkey with multiple MCP servers; without a per-server discriminator, a `delete_resource` challenge from server A could be replayed against server B if both expose a tool with that name. `serverId` is that discriminator: an implementation-internal value, not a wire field. Servers MUST use a serverId value that is unique across all servers a credential might be enrolled with. Suitable choices include the server's OAuth issuer URL, a stable URL identifier, or a UUID generated at first initialization and persisted across restarts. A constant default value (e.g., `"mcp-default"`) is non-conformant: two servers using the same default produce identical action hashes for identical (toolName, arguments) tuples, enabling cross-server replay.
+The action hash binds three inputs because two of them — the tool name and the arguments — are not unique across servers. A user might enroll the same WebAuthn credential with multiple MCP servers; without a per-server discriminator, a `delete_resource` challenge from server A could be replayed against server B if both expose a tool with that name. `serverId` is that discriminator: an implementation-internal value, not a wire field. Servers MUST use a serverId value that is unique across all servers a credential might be enrolled with. Suitable choices include the server's OAuth issuer URL, a stable URL identifier, or a UUID generated at first initialization and persisted across restarts. A constant default value (e.g., `"mcp-default"`) is non-conformant: two servers using the same default produce identical action hashes for identical (toolName, arguments) tuples, enabling cross-server replay.
 
 Normative requirements:
 
@@ -463,7 +463,7 @@ This subsection consolidates client-side normative requirements introduced in ea
 
 - Clients MUST detect tools carrying the verified-approval annotation per §4.2.
 - Clients MUST NOT invoke an approval-required tool without first requesting a challenge via `approval/challenge/create` per §4.4.3.
-- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion per §4.4.3. The displayText is the human-readable surface through which the user reviews the action that the action hash will bind; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets without changing the cryptographic binding.
+- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion per §4.4.3. The `displayText` is the human-readable surface through which the user reviews the action that the action hash will bind; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets without changing the cryptographic binding.
 - Clients MUST forward the WebAuthn assertion response unmodified per §4.5.
 - Clients MUST attach the assertion evidence at `params._meta["io.modelcontextprotocol/verified-approval"]` on the `tools/call` request per §4.5.
 - Clients MUST NOT reuse a `challengeId` across `tools/call` invocations per §4.5; each `challengeId` is bound to exactly one call.
