@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -35,7 +37,30 @@ import {
 
 const PORT = 3030;
 const ALLOWED_ORIGIN = "http://localhost:5173";
-const SERVER_ID = "phase-3-dev-server";
+
+// §4.6 requires serverId to be unique across all servers a credential might
+// be enrolled with. A baked-in constant fails that test: two independent
+// instances of the demo would emit identical action hashes for identical
+// (toolName, arguments) tuples, enabling cross-server replay. We therefore
+// resolve serverId from (in order): an environment variable override, a
+// previously-persisted file in the workspace root, or a freshly-generated
+// UUID written to that file. Once written, the file is the stable identity
+// of this demo instance across restarts.
+function loadOrGenerateServerId(): string {
+  const fromEnv = process.env.MCP_VERIFIED_APPROVAL_SERVER_ID?.trim();
+  if (fromEnv) return fromEnv;
+
+  const file = path.resolve(process.cwd(), ".serverid");
+  if (existsSync(file)) {
+    const value = readFileSync(file, "utf8").trim();
+    if (value) return value;
+  }
+  const fresh = randomUUID();
+  writeFileSync(file, fresh + "\n", "utf8");
+  return fresh;
+}
+
+const SERVER_ID = loadOrGenerateServerId();
 
 const trades: TradeRecord[] = [];
 
