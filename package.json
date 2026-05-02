@@ -4,16 +4,19 @@
   "version": "0.0.0",
   "description": "Reference implementation: MCP with cryptographically verified human approval (Phase 0 scaffold).",
   "workspaces": [
+    "mcp-verified-approval",
     "shared",
     "server",
     "client"
   ],
   "scripts": {
+    "build:lib": "npm --workspace mcp-verified-approval run build",
     "build:shared": "npm --workspace shared run build",
+    "build:all": "npm run build:lib && npm run build:shared",
     "dev:server": "npm --workspace server run dev",
     "dev:client": "npm --workspace client run dev",
-    "dev": "npm run build:shared && concurrently -n server,client -c blue,magenta \"npm run dev:server\" \"npm run dev:client\"",
-    "test": "npm run build:shared && npm --workspace server test"
+    "dev": "npm run build:all && concurrently -n server,client -c blue,magenta \"npm run dev:server\" \"npm run dev:client\"",
+    "test": "npm run build:all && npm --workspace server test"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
