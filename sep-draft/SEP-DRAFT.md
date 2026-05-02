@@ -613,76 +613,108 @@ The reference implementation is a TypeScript library at `mcp-verified-approval` 
 
 #### 8.1.1 Compromised MCP client (primary)
 
-- Description.
+The MCP client process owns the dialog, drives the LLM loop, and issues `tools/call` requests. A compromised client — by supply-chain attack, runtime takeover, or prompt injection that escapes containment — can dismiss confirmation dialogs, fabricate user input to UI surfaces it controls, and submit arbitrary calls.
+
+Verified approval defends against this threat by moving the user's authorization gesture to a cryptographic signature the compromised client cannot produce. The WebAuthn private key is hardware-isolated from the client's process; the client cannot synthesize a valid assertion without it. The compromised client can refuse to invoke the ceremony, but it cannot fabricate a successful one.
 
 #### 8.1.2 Prompt injection within an honest client
 
-- Description.
+A specific subset of §8.1.1: an honest, well-implemented client whose LLM consumes adversarial content — a malicious tool output, a poisoned RAG document, a hostile web page. The injected content tries to convince the agent to invoke a destructive tool or to suppress confirmation UI.
+
+Verified approval prevents the agent from satisfying the human-consent requirement on its own. The agent can be convinced to attempt the call; the call cannot succeed without a real user gesture against a real authenticator. Prompt injection that aims to "delete all files" reduces to "delete all files, but the user will see `displayText` and decline" — which is the system working as designed.
 
 #### 8.1.3 Network-layer attackers
 
-- Covered by transport TLS.
+An adversary who can observe or modify traffic between client and server is out of scope: transport security is the MCP base spec's responsibility (TLS for HTTPS, OS-level IPC trust for stdio). Verified approval does not add a separate transport-security layer.
+
+That said, an active network attacker who rewrites a `tools/call` body cannot succeed against an approval-required tool. The action hash binds the assertion to specific arguments per §4.6, so rewriting arguments invalidates the signature. The attacker can drop calls or replay them, but replays are caught by the consume-once invariant of §4.8.
 
 #### 8.1.4 Compromised authenticator
 
-- Hardware-rooted defense.
+If the authenticator itself is compromised — its private key extracted, the device cloned, or biometric gating bypassed — the attacker can produce valid signatures for any challenge they receive. This is the WebAuthn trust root; defending it is outside MCP's scope. The proposal inherits WebAuthn's defense — hardware-isolated keys with attestation, biometric or PIN gating on use — and assumes the authenticator's own threat model.
 
 #### 8.1.5 Malicious server
 
-- Out of scope; the user trusts the server they chose.
+A server that emits fraudulent challenges, lies about which tools require approval, or otherwise misuses the protocol is out of scope. The user trusts the server they chose to connect to. Verified approval is server-enforced — the server is the verifier — so a malicious server is not a threat verified approval is designed to mitigate. Server-trust questions belong to the broader MCP authorization model.
 
 ### 8.2 Properties delivered (with reasoning)
 
 #### 8.2.1 Argument-binding via the challenge construction
 
-- Reasoning.
+The action hash combines the canonical arguments, the tool name, and the server identifier into 32 SHA-256 bytes per §4.6. The hash is concatenated with a fresh 32-byte nonce into the WebAuthn challenge per §4.4.3. The signature certifies the challenge bytes verbatim, which means it certifies the specific canonicalized arguments that produced the hash. Modifying the arguments after signing produces a different hash and a verification failure (§4.8 step 12).
+
+Threat addressed: an attacker who captures a valid assertion cannot reuse it for a different invocation, even of the same tool with different arguments. The signature is bound to one specific `(toolName, canonicalArguments, serverId)` tuple.
 
 #### 8.2.2 Freshness via per-call nonce and TTL
 
-- Reasoning.
+Each `approval/challenge/create` produces a fresh CSPRNG-drawn nonce and an `expiresAt` timestamp per §4.4.3. The nonce ensures every challenge is unique — even repeated challenges for identical arguments produce distinct wire-challenge bytes and distinct signatures. The TTL bounds the window in which any given challenge is acceptable; expired challenges are rejected per §4.8 step 6.
+
+Threat addressed: an attacker who captures a valid assertion has a bounded window to use it (60-second default per §4.4.3) and only one use within that window — see §8.2.3.
 
 #### 8.2.3 Single-use via server-side atomic consume
 
-- Reasoning.
+§4.8 step 13 requires the challenge be consumed atomically after all preceding verification steps succeed. The verify-precedes-consume ordering invariant (§4.8) ensures a captured assertion cannot consume a challenge by failing verification — the consume only fires for valid assertions, so a legitimate next call retains its ability to use the challenge if a forged earlier attempt is rejected.
+
+Threat addressed: replay attacks within the TTL window. Each challenge authorizes exactly one tool execution; the second submission of the same `challengeId` is rejected with `challenge_consumed`.
 
 #### 8.2.4 Capability filtering via authenticator class
 
-- Reasoning.
+Per §4.7, the `authenticatorClass` filter excludes credentials whose advertised transports are exclusively `["internal"]` from the `allowCredentials` list at challenge issuance. The filter is applied uniformly: at registration-time it is captured in the credential's stored transports; at challenge-issuance time it gates eligibility.
+
+Threat addressed: tools that opt into `cross-platform` exclude same-device-only authenticators (Touch ID without an external transport, Windows Hello without an external key) from being used to approve them. The filter establishes a capability boundary; what it does NOT address — synced credentials advertising `["hybrid", "internal"]` presented locally — is documented in §8.3.1.
 
 ### 8.3 Residual risks
 
 #### 8.3.1 Display tampering for synced credentials
 
-- The empirical finding; link to `verification/phase-4-mitigation-1.md`.
+The verified-approval ceremony certifies that *some* user gesture occurred against an enrolled credential. It does not certify that the gesture occurred on a display surface outside the client's control.
+
+For synced credentials advertising `["hybrid", "internal"]` (typical of iCloud Keychain and Google Password Manager passkeys), the OS picker presents the local presentation path on the device hosting the client. A compromised client driving that path can display one action description as `displayText` while the signature certifies the argument-bound hash. Empirical confirmation in `verification/phase-4-mitigation-1.md`: WebAuthn Level 3 `hints: ["hybrid"]` is a no-op on macOS 26.4.1 with Safari 26.4 and Chrome 147; the system picker presents the local credential regardless.
+
+The cryptographic binding holds; the human-understanding binding is the residual gap. A compromised client lying about `displayText` cannot forge the signature. Mitigations require platform-side changes — per-call attestation of the transport actually used at sign time, or stricter `hints` semantics — documented as Future Work in §8.4.1.
 
 #### 8.3.2 Counter-zero credentials
 
-- Apple synced passkey case; cloning detection degraded.
+Per §4.8 step 11, the signCount monotonicity check is disabled when the stored counter is zero — accommodating synced credentials such as iCloud Keychain passkeys, which report counter values of zero indefinitely (passkeys are not required to maintain a counter per WebAuthn Level 3). The trade-off is that cloning detection is degraded for these credentials: if a synced credential is compromised and the attacker observes the same `counter == 0` view as the legitimate device, an assertion produced by the cloned key will not be rejected for counter regression.
 
-#### 8.3.3 Social engineering of the user gesture
+The proposal accepts this trade-off because rejecting all counter-zero credentials would exclude all iCloud Keychain passkeys, severely limiting practical deployability on Apple devices. Cloning detection is one defense among several; argument-binding, single-use, and authenticator-class filtering still apply.
 
-- Out of protocol scope.
+#### 8.3.3 Schema-applied defaults
 
-#### 8.3.4 Recovery flow
+§4.6 closes the server-side gap with a normative MUST NOT against applying schema defaults, type coercions, or other transformations between canonicalization and action-hash computation. What remains is the layer above — the tool's `inputSchema` itself.
 
-- Lost authenticator — implementation-defined.
+If a tool declares defaults for security-sensitive fields — for example, `bypass_review: { type: "boolean", default: false }` — and the client sends `arguments: {}`, the server canonicalizes and signs for the empty form, and the execute handler subsequently runs `argsSchema.parse({})` to produce `{ bypass_review: false }`. The user signed for what they saw (empty arguments); the tool executed with a default the user never explicitly approved.
+
+Tool-author guidance: avoid security-sensitive defaults in the `inputSchema` of approval-required tools. Required fields are signed-for; defaulted fields are not. If defaults are operationally necessary, apply them at the application layer before canonicalization. The protocol covers what the protocol can cover; the layer above is the tool author's responsibility.
+
+#### 8.3.4 Social engineering of the user gesture
+
+The proposal cannot prevent a user from being socially engineered into approving a malicious call — entering their PIN, applying their fingerprint, or tapping their hardware key when an attacker has convinced them to. The cryptographic binding is correct; the human's decision to trust the prompt is outside the protocol's scope. This is a generic limitation of authenticator-based approval flows.
+
+The `displayText` requirement (§4.4.3) and the verbatim-presentation client MUST (§4.9) defend against social engineering done through misleading prompt copy. They cannot defend against the user being convinced through other channels — phishing emails, voice calls, or instructions on a different screen. Defense there depends on user training and broader operational security.
+
+#### 8.3.5 Recovery flow (lost authenticator)
+
+If a user loses their only enrolled authenticator and cannot enroll a replacement, they cannot approve calls to annotated tools. Recovery is implementation-defined: a server might fall back to OAuth-based step-up authentication (with the corresponding loss of per-call argument-binding), require an out-of-band re-enrollment ceremony, or simply require the user to re-enroll fresh credentials.
+
+The proposal does not mandate a recovery mechanism. Recovery flows depend heavily on the broader trust model of each deployment, and standardizing one mechanism would be premature. The design space is an open spec question for a future profile.
 
 ### 8.4 Future Work / open spec questions
 
 #### 8.4.1 Per-assertion transport observability
 
-- Notes.
+The most direct mitigation for §8.3.1: WebAuthn assertions reporting the transport actually used at sign time, rather than the credential's advertised transports. A future WebAuthn extension or `clientExtensionResults` field could carry this. The MCP layer would consume it via §4.8's verification flow, promoting the authenticator-class filter from a capability check to a use-time check.
 
 #### 8.4.2 Out-of-band confirmation channels
 
-- Notes.
+A future profile might add a non-WebAuthn approval method using a registered out-of-band channel — push to a phone app, signed SMS, voice confirmation. The discriminated-union evidence shape (§4.5, §5.6) makes this an additive change: a new `method` value with its own response shape and verification rules.
 
 #### 8.4.3 Multi-party countersignature
 
-- Notes.
+For high-stakes actions, a future profile might require N-of-M signatures from multiple enrolled human-bound credentials. The single-signature design today is the simplest case (1-of-1); the protocol does not preclude richer countersignature semantics in a future revision.
 
 #### 8.4.4 Headless agent contexts
 
-- Delegated approval sessions.
+The current proposal assumes a present human. Some agent deployments are headless — long-running CI workflows, automated pipelines. A future profile might define delegated approval sessions where a human pre-authorizes a class of calls within a bounded window, with auditing of which calls executed under the delegation. The design space is large and the security model is delicate; this is genuine future work.
 
 <!-- No appendices in v1. Test vectors live in the reference implementation. -->
