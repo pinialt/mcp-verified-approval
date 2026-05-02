@@ -384,7 +384,7 @@ if (isMain) {
       return `${t.listEntry.name}[${meta.authenticatorClass ?? "cross-platform"}]`;
     });
   console.log("──────────────────────────────────────────────");
-  console.log(" mcp-sec server (Phase 4b)");
+  console.log(" mcp-sec server (v0.1)");
   console.log(` port:      ${handle.port}`);
   console.log(" transport: Streamable HTTP (stateful, /mcp)");
   console.log(` tools:     ${[...DEMO_TOOLS.keys()].join(", ")}  (verified-approval: ${annotated.join(", ") || "none"})`);

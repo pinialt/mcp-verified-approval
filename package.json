@@ -2,7 +2,8 @@
   "name": "mcp-sec",
   "private": true,
   "version": "0.0.0",
-  "description": "Reference implementation: MCP with cryptographically verified human approval (Phase 0 scaffold).",
+  "description": "Reference implementation of the verified-approval MCP extension: library, demo server, and browser client.",
+  "license": "MIT",
   "workspaces": [
     "mcp-verified-approval",
     "shared",

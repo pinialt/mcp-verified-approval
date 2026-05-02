@@ -4,3 +4,11 @@ dist
 *.log
 .vite
 .serverid
+
+# Editor
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.*

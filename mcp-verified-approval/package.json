@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Reference library for the MCP verified-approval extension. Server gate, client ceremony, shared protocol vocabulary.",
+  "license": "MIT",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
