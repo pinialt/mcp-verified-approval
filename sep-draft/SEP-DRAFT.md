@@ -425,7 +425,7 @@ The filter is applied at two points in the ceremony:
 - At enrollment-time, via the registration-options `authenticatorSelection` constraints.
 - At challenge-issuance time, via the `allowCredentials` list on the WebAuthn assertion options. Credentials whose transports do not satisfy the policy are excluded from `allowCredentials`, so the browser will not invoke them for signing.
 
-This is a CAPABILITY filter, not a use-time guarantee. The cross-platform policy excludes credentials advertised as same-device-only; it does not constrain which device the user actually signs on. With synced-credential providers (iCloud Keychain, Google Password Manager, etc.), a credential whose transports include both `"hybrid"` and `"internal"` is locally usable on the device hosting the client, and the OS picker may present the local presentation path regardless of server-issued WebAuthn hints. The cross-platform filter correctly excludes the underlying credential class that exists ONLY on the client device; it does not exclude credentials that exist on a separate device but are also synced and locally usable. Mitigating display-tampering on synced credentials requires platform-side changes (per-call attestation of the transport actually used at sign time, out-of-band confirmation channels, etc.) and is documented as Future Work in §8.4.
+This is a CAPABILITY filter, not a use-time guarantee. The cross-platform policy excludes credentials advertised as same-device-only; it does not constrain which device the user actually signs on. With synced-credential providers (iCloud Keychain, Google Password Manager, etc.), a credential whose transports include both `"hybrid"` and `"internal"` is locally usable on the device hosting the client, and the OS picker may present the local presentation path regardless of server-issued WebAuthn hints. The cross-platform filter correctly excludes credentials whose transports advertise only `["internal"]`. It does not exclude credentials whose transports advertise `["hybrid", "internal"]` — even when the OS picker may present those credentials via the local device path. Synced-credential providers (iCloud Keychain, Google Password Manager) typically advertise `["hybrid", "internal"]` because the credential is reachable via cross-device flows OR locally; the filter, applied to the advertised transports, cannot distinguish which of those paths the user will actually take. Mitigating display-tampering on synced credentials requires platform-side changes (per-call attestation of the transport actually used at sign time, out-of-band confirmation channels, etc.) and is documented as Future Work in §8.4.
 
 Normative requirements:
 
@@ -448,14 +448,14 @@ Servers MUST perform the following checks in order when handling a `tools/call` 
 8. The credential `evidence.response.id` MUST be enrolled. Unknown → `unknown_credential`.
 9. The credential's transports MUST satisfy the tool's `authenticatorClass` policy per §4.7. Mismatch → `authenticator_class_mismatch`.
 10. The WebAuthn signature MUST verify against the credential's stored public key. Failed → `signature_verification_failed`.
-11. The credential's signCount MUST be strictly greater than the stored counter when the stored counter is greater than zero (a stored counter of zero disables this check, per WebAuthn L3, accommodating synced credentials that do not maintain a counter). Regression → `signature_counter_regression`.
+11. The credential's signCount MUST be strictly greater than the stored counter when the stored counter is greater than zero. A stored counter of zero disables this check; this accommodates synced credentials (e.g., iCloud Keychain passkeys) that report counter values of zero indefinitely. Regression → `signature_counter_regression`.
 12. The action hash recomputed from `(toolName, canonicalArguments, serverId)` per §4.6 MUST equal the action hash committed in the issued challenge. Mismatch → `argument_hash_mismatch`.
 13. The challenge MUST be atomically consumed after all preceding checks succeed. Consume-then-verify implementations are non-conformant — a captured assertion replayed against a still-valid challenge would consume the challenge before the failing verification surfaces, leaving the legitimate next call unable to use it.
 14. The credential's stored counter MUST be updated to the value reported in the assertion.
 
 The order of these checks is normative for steps 1-13. Verification (1-12) MUST precede consumption (13). The challenge-state checks (4-7) follow the order unknown → consumed → expired → wrong-tool to give callers the most specific reason available.
 
-Successful completion of steps 1-14 produces a binary result: the verification ceremony returns without throwing. This result is the verified-approval primitive's deliverable. The tool's execution itself is NOT part of this ceremony; the server's `tools/call` handler — typically a thin layer above the gate — is responsible for invoking the tool's execute handler only after verification returns successfully. This separation makes clear what the proposal delivers (a binary attestation that this specific call is authorized) and what it does not deliver (the execution itself, which remains the caller's domain and may have its own failure modes unrelated to approval).
+Successful completion of steps 1-14 produces the verified-approval primitive's deliverable: a binary attestation that this specific call is authorized. The tool's execution itself is NOT part of this ceremony. The caller — typically the server's `tools/call` handler — is responsible for invoking the tool's execute handler only after verification returns successfully. This separation makes clear what the proposal delivers (authorization for a specific call) and what it does not (the execution itself, which has its own failure modes outside this proposal's scope).
 
 ### 4.9 Client behavior rules (normative MUST list)
 
@@ -464,15 +464,15 @@ This subsection consolidates client-side normative requirements introduced in ea
 - Clients MUST detect tools carrying the verified-approval annotation per §4.2.
 - Clients MUST NOT invoke an approval-required tool without first requesting a challenge via `approval/challenge/create` per §4.4.3.
 - Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion per §4.4.3. Transformations of `displayText` (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets.
-- Clients MUST invoke the WebAuthn assertion only after the user has reviewed `displayText`.
 - Clients MUST forward the WebAuthn assertion response unmodified per §4.5.
 - Clients MUST attach the assertion evidence at `params._meta["io.modelcontextprotocol/verified-approval"]` on the `tools/call` request per §4.5.
 - Clients MUST NOT reuse a `challengeId` across `tools/call` invocations per §4.5; each `challengeId` is bound to exactly one call.
+- Clients MUST invoke the WebAuthn assertion only after the user has reviewed `displayText`.
 - Clients SHOULD surface §4.10 errors to the user with appropriate context. The specific UX is implementation-defined; this is a SHOULD because the choice of presentation (modal, toast, log entry) depends on the client's broader interface conventions.
 
 ### 4.10 Error codes and reasons
 
-All approval-domain rejections use the JSON-RPC error code `-32001` — a server-defined error code in the range reserved for application-specific errors. The error structure follows JSON-RPC convention: a top-level `error` object with `code`, a human-readable `message`, and a structured `data` object containing a `reason` field. The `reason` field is the canonical machine-readable discriminator; clients SHOULD branch on it rather than parsing `message`.
+All approval-domain rejections use the JSON-RPC error code `-32001`. JSON-RPC 2.0 reserves codes -32000 to -32099 for implementation-defined server errors; this proposal occupies one slot in that range. The error structure follows JSON-RPC convention: a top-level `error` object with `code`, a human-readable `message`, and a structured `data` object containing a `reason` field. The `reason` field is the canonical machine-readable discriminator; clients SHOULD branch on it rather than parsing `message`.
 
 ```json
 {
