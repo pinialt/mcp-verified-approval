@@ -391,7 +391,7 @@ Normative requirements:
 
 This proposal uses RFC 8785 (JSON Canonicalization Scheme, JCS) for argument canonicalization. JCS produces a single, deterministic byte sequence for any JSON value, with sorted object keys, normalized number serialization, and UTF-8 NFC normalization where applicable. Both client and server MUST use RFC 8785 verbatim — implementation-specific variants of "deterministic JSON" are non-conformant.
 
-Canonicalization is applied to the validated arguments object that will be passed to the tool's execution handler — the same object processed by the tool's `inputSchema` (defaults applied, type coercions performed) at the MCP layer. Canonicalization is NOT applied to the raw JSON bytes received from the client; clients and servers may differ in how they format that JSON, but the validated logical object canonicalizes to the same bytes on both sides.
+Canonicalization is applied to the arguments object as received in the request — the same logical JSON value the client sent, normalized through JCS to a deterministic byte sequence. Both client and server MUST canonicalize the same logical value: the client constructs the proposed arguments, canonicalizes them once for the challenge request, and forwards those same arguments unchanged on the subsequent `tools/call`. Servers MUST NOT apply schema defaults, type coercions, or other transformations between canonicalization and action-hash computation; the user signs for what the canonical bytes describe, not for some downstream-validated form of it.
 
 The action hash binds three inputs — the tool name, the canonicalized arguments, and the per-server identifier — into a single 32-byte SHA-256 digest:
 
@@ -411,7 +411,7 @@ Normative requirements:
 - Both MUST use SHA-256 for the action hash.
 - The action hash MUST be computed as `SHA-256(utf8(toolName) || 0x00 || utf8(canonicalArgsJson) || 0x00 || utf8(serverId))` with the 0x00 byte as separator.
 - Servers MUST keep `serverId` stable across the lifetime of issued challenges; rotating `serverId` while challenges are pending invalidates them.
-- Canonicalization MUST be applied to the validated arguments object passed to the tool's execution handler, not to the raw JSON bytes received from the client.
+- Canonicalization MUST be applied to the arguments object as received in the request. Servers MUST NOT apply schema defaults, type coercions, or other transformations to the arguments between canonicalization and action-hash computation.
 
 ### 4.7 Authenticator class policy: capability filter
 
@@ -420,10 +420,9 @@ The verified-approval annotation's optional `authenticatorClass` field declares 
 - `"cross-platform"` (the default when `authenticatorClass` is omitted): credentials whose stored transports include at least one of `hybrid`, `usb`, `nfc`, or `ble` are eligible. Credentials whose transports are exclusively `["internal"]` (same-device-only authenticators such as platform biometrics) are excluded.
 - `"platform"`: any enrolled credential is eligible, including same-device-only authenticators.
 
-The filter is applied at two points in the ceremony:
+The filter is applied at challenge-issuance time, via the `allowCredentials` list on the WebAuthn assertion options. Credentials whose stored transports do not satisfy the policy are excluded from `allowCredentials`, so the browser will not invoke them for signing.
 
-- At enrollment-time, via the registration-options `authenticatorSelection` constraints.
-- At challenge-issuance time, via the `allowCredentials` list on the WebAuthn assertion options. Credentials whose transports do not satisfy the policy are excluded from `allowCredentials`, so the browser will not invoke them for signing.
+Enrollment is per-user, not per-tool: a single credential pool serves all of a user's annotated tools, which may declare different `authenticatorClass` values. The server MUST capture and persist each credential's transports at enrollment-finish time so the per-tool filter can be applied at challenge-issuance. Enrollment itself does not constrain which authenticator class a user may register; that decision is deferred to challenge time, where the per-tool policy is known.
 
 This is a CAPABILITY filter, not a use-time guarantee. The cross-platform policy excludes credentials advertised as same-device-only; it does not constrain which device the user actually signs on. With synced-credential providers (iCloud Keychain, Google Password Manager, etc.), a credential whose transports include both `"hybrid"` and `"internal"` is locally usable on the device hosting the client, and the OS picker may present the local presentation path regardless of server-issued WebAuthn hints. The cross-platform filter correctly excludes credentials whose transports advertise only `["internal"]`. It does not exclude credentials whose transports advertise `["hybrid", "internal"]` — even when the OS picker may present those credentials via the local device path. Synced-credential providers (iCloud Keychain, Google Password Manager) typically advertise `["hybrid", "internal"]` because the credential is reachable via cross-device flows OR locally; the filter, applied to the advertised transports, cannot distinguish which of those paths the user will actually take. Mitigating display-tampering on synced credentials requires platform-side changes (per-call attestation of the transport actually used at sign time, out-of-band confirmation channels, etc.) and is documented as Future Work in §8.4.
 
@@ -431,7 +430,7 @@ Normative requirements:
 
 - When `authenticatorClass` is `"cross-platform"` or omitted, servers MUST exclude credentials from `allowCredentials` whose stored transports are exclusively `["internal"]`.
 - When `authenticatorClass` is `"platform"`, servers MUST accept any enrolled credential.
-- Servers MUST apply the filter both at enrollment-time and at challenge-issuance time per the two-point flow above.
+- Servers MUST apply the `authenticatorClass` filter at challenge-issuance time when constructing `allowCredentials`. Servers MUST persist each credential's transports at enrollment-finish (per §4.4.2) so the filter has the data it needs.
 - The filter has no client-side normative requirement; clients are not expected to participate in or replicate the policy check.
 
 ### 4.8 Server verification rules (normative MUST list)
