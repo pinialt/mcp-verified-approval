@@ -326,7 +326,7 @@ Normative requirements:
 - Servers MUST populate `requestOptions.allowCredentials` with the user's enrolled credentials filtered by the tool's `authenticatorClass` policy per §4.7.
 - Servers MUST set `requestOptions.userVerification` to `"required"`.
 - Servers MUST construct `displayText` from a server-side describe function applied to the supplied arguments. The `displayText` MUST be human-readable and accurately describe the action being approved. This is security-relevant — the user's understanding of what they are signing depends on it matching the action hash bound by the same call. See §8 on display tampering for the threat-model boundaries of this guarantee.
-- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion. The displayText is the user's authoritative description of the action being approved; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets.
+- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion. The displayText is the human-readable surface through which the user reviews the action that the action hash will bind; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets without changing the cryptographic binding.
 
 ### 4.5 Evidence on `tools/call`: `params._meta["io.modelcontextprotocol/verified-approval"]`
 
@@ -447,7 +447,7 @@ Servers MUST perform the following checks in order when handling a `tools/call` 
 8. The credential `evidence.response.id` MUST be enrolled. Unknown → `unknown_credential`.
 9. The credential's transports MUST satisfy the tool's `authenticatorClass` policy per §4.7. Mismatch → `authenticator_class_mismatch`.
 10. The WebAuthn signature MUST verify against the credential's stored public key. Failed → `signature_verification_failed`.
-11. The credential's signCount MUST be strictly greater than the stored counter when the stored counter is greater than zero. A stored counter of zero disables this check; this accommodates synced credentials (e.g., iCloud Keychain passkeys) that report counter values of zero indefinitely. Regression → `signature_counter_regression`.
+11. The credential's signCount MUST be strictly greater than the stored counter when the stored counter is greater than zero. A stored counter of zero disables this check; this accommodates synced credentials (e.g., iCloud Keychain passkeys) that report counter values of zero indefinitely. When this check is disabled, the protocol relies on the remaining verification steps for clone resistance — argument-binding, single-use, and authenticator-class filtering still apply, but counter-based clone detection does not. Regression → `signature_counter_regression`.
 12. The action hash recomputed from `(toolName, canonicalArguments, serverId)` per §4.6 MUST equal the action hash committed in the issued challenge. Mismatch → `argument_hash_mismatch`.
 13. The challenge MUST be atomically consumed after all preceding checks succeed. Consume-then-verify implementations are non-conformant — a captured assertion replayed against a still-valid challenge would consume the challenge before the failing verification surfaces, leaving the legitimate next call unable to use it.
 14. The credential's stored counter MUST be updated to the value reported in the assertion.
@@ -462,7 +462,7 @@ This subsection consolidates client-side normative requirements introduced in ea
 
 - Clients MUST detect tools carrying the verified-approval annotation per §4.2.
 - Clients MUST NOT invoke an approval-required tool without first requesting a challenge via `approval/challenge/create` per §4.4.3.
-- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion per §4.4.3. Transformations of `displayText` (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets.
+- Clients MUST present `displayText` to the user verbatim before invoking the WebAuthn assertion per §4.4.3. The displayText is the human-readable surface through which the user reviews the action that the action hash will bind; transformations of it (truncation, paraphrasing, omission) defeat the human-understanding property the proposal targets without changing the cryptographic binding.
 - Clients MUST forward the WebAuthn assertion response unmodified per §4.5.
 - Clients MUST attach the assertion evidence at `params._meta["io.modelcontextprotocol/verified-approval"]` on the `tools/call` request per §4.5.
 - Clients MUST NOT reuse a `challengeId` across `tools/call` invocations per §4.5; each `challengeId` is bound to exactly one call.
@@ -621,7 +621,7 @@ Verified approval defends against this threat by moving the user's authorization
 
 A specific subset of §8.1.1: an honest, well-implemented client whose LLM consumes adversarial content — a malicious tool output, a poisoned RAG document, a hostile web page. The injected content tries to convince the agent to invoke a destructive tool or to suppress confirmation UI.
 
-Verified approval prevents the agent from satisfying the human-consent requirement on its own. The agent can be convinced to attempt the call; the call cannot succeed without a real user gesture against a real authenticator. Prompt injection that aims to "delete all files" reduces to "delete all files, but the user will see `displayText` and decline" — which is the system working as designed.
+Verified approval prevents the agent from satisfying the human-consent requirement on its own. The agent can be convinced to attempt the call; the call cannot succeed without a real user gesture against a real authenticator. Prompt injection that aims to "delete all files" reduces to "the agent attempts the call, the user reviews `displayText`, and the protocol enforces refusal absent a valid signature."
 
 #### 8.1.3 Network-layer attackers
 
