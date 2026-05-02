@@ -16,30 +16,33 @@ import type {
   WebAuthnCredential,
 } from "@simplewebauthn/server";
 import {
-  APPROVAL_CHALLENGE_CREATE_METHOD,
-  APPROVAL_ENROLL_BEGIN_METHOD,
-  APPROVAL_ENROLL_FINISH_METHOD,
-  APPROVAL_ERROR_CODE,
   EXPECTED_ORIGIN,
   RP_ID,
   RP_NAME,
   USER_DISPLAY_NAME,
   USER_HANDLE,
   USER_NAME,
+  type PlaceTradeArgs,
+  type PlaceTradeResult,
+  type TradeRecord,
+} from "@mcp-sec/shared";
+import {
+  APPROVAL_CHALLENGE_CREATE_METHOD,
+  APPROVAL_ENROLL_BEGIN_METHOD,
+  APPROVAL_ENROLL_FINISH_METHOD,
+  APPROVAL_ERROR_CODE,
   VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM,
-  VERIFIED_APPROVAL_META_KEY,
+  VERIFIED_APPROVAL_REQUEST_META_KEY,
   VERIFIED_APPROVAL_REQUIRED,
+  VERIFIED_APPROVAL_TOOL_META_KEY,
   canonicalArgs,
   policyAcceptsTransports,
   type ApprovalChallenge,
   type ApprovalErrorReason,
-  type PlaceTradeArgs,
-  type PlaceTradeResult,
+  type AuthenticatorClass,
   type PublicKeyCredentialRequestOptionsJSONShape,
-  type TradeRecord,
-  type VerifiedApprovalAuthenticatorClass,
   type VerifiedApprovalToolMeta,
-} from "@mcp-sec/shared";
+} from "mcp-verified-approval/shared";
 
 const PORT = 3030;
 const ALLOWED_ORIGIN = "http://localhost:5173";
@@ -187,7 +190,7 @@ TOOLS.set("place_trade", {
         limit: { type: "number", exclusiveMinimum: 0, description: "Limit price" },
       },
     },
-    _meta: { [VERIFIED_APPROVAL_META_KEY]: placeTradeMeta },
+    _meta: { [VERIFIED_APPROVAL_TOOL_META_KEY]: placeTradeMeta },
   },
   toolMeta: placeTradeMeta,
   argsSchema: PlaceTradeArgsSchema,
@@ -232,7 +235,7 @@ const CallToolRequestSchema = z.object({
     arguments: z.record(z.string(), z.unknown()).optional(),
     _meta: z
       .object({
-        [VERIFIED_APPROVAL_META_KEY]: ApprovalEvidenceSchema.optional(),
+        [VERIFIED_APPROVAL_REQUEST_META_KEY]: ApprovalEvidenceSchema.optional(),
       })
       .passthrough()
       .optional(),
@@ -273,7 +276,7 @@ async function handleChallengeCreate(
     throw new McpError(-32602, `Tool ${toolName} does not require verified approval`);
   }
 
-  const policy: VerifiedApprovalAuthenticatorClass =
+  const policy: AuthenticatorClass =
     tool.toolMeta.authenticatorClass ?? VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM;
 
   const eligible = [...credentials.values()].filter(
@@ -544,7 +547,7 @@ function buildMcpServer(): McpServer {
 
     const requiresApproval = tool.toolMeta?.required === VERIFIED_APPROVAL_REQUIRED;
     if (requiresApproval) {
-      const evidence = _meta?.[VERIFIED_APPROVAL_META_KEY];
+      const evidence = _meta?.[VERIFIED_APPROVAL_REQUEST_META_KEY];
       if (!evidence) throw approvalError("missing_evidence", "Approval evidence required");
       await verifyAndConsume(tool, rawArgs, evidence);
     }

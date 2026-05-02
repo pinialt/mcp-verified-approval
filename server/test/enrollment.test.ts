@@ -7,12 +7,12 @@ import WebAuthnEmulator, {
   AuthenticatorEmulator,
   PasskeysCredentialsMemoryRepository,
 } from "nid-webauthn-emulator";
+import { EXPECTED_ORIGIN } from "@mcp-sec/shared";
 import {
   APPROVAL_ENROLL_BEGIN_METHOD,
   APPROVAL_ENROLL_FINISH_METHOD,
   APPROVAL_ERROR_CODE,
-  EXPECTED_ORIGIN,
-} from "@mcp-sec/shared";
+} from "mcp-verified-approval/shared";
 import { startServer } from "../src/index.js";
 
 let handle: { port: number; close: () => Promise<void> };

@@ -10,21 +10,24 @@ import type {
 } from "@simplewebauthn/browser";
 import { z } from "zod";
 import {
+  type PlaceTradeArgs,
+  type PlaceTradeResult,
+  type TradeRecord,
+} from "@mcp-sec/shared";
+import {
   APPROVAL_CHALLENGE_CREATE_METHOD,
   APPROVAL_ENROLL_BEGIN_METHOD,
   APPROVAL_ENROLL_FINISH_METHOD,
   APPROVAL_ERROR_CODE,
   VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM,
-  VERIFIED_APPROVAL_META_KEY,
+  VERIFIED_APPROVAL_REQUEST_META_KEY,
   VERIFIED_APPROVAL_REQUIRED,
+  VERIFIED_APPROVAL_TOOL_META_KEY,
   policyAcceptsTransports,
   type ApprovalChallenge,
-  type PlaceTradeArgs,
-  type PlaceTradeResult,
-  type TradeRecord,
-  type VerifiedApprovalAuthenticatorClass,
+  type AuthenticatorClass,
   type VerifiedApprovalToolMeta,
-} from "@mcp-sec/shared";
+} from "mcp-verified-approval/shared";
 
 const SERVER_BASE = "http://localhost:3030";
 const SERVER_URL = `${SERVER_BASE}/mcp`;
@@ -153,7 +156,7 @@ function updateSubmitButtonEligibility(): void {
     submitEl.removeAttribute("title");
     return;
   }
-  const cls: VerifiedApprovalAuthenticatorClass =
+  const cls: AuthenticatorClass =
     policy.authenticatorClass ?? VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM;
   const eligible = enrolledCredentials.some((c) => policyAcceptsTransports(cls, c.transports));
   if (eligible) {
@@ -165,7 +168,7 @@ function updateSubmitButtonEligibility(): void {
   }
 }
 
-function classDescription(cls: VerifiedApprovalAuthenticatorClass): string {
+function classDescription(cls: AuthenticatorClass): string {
   return cls === VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM
     ? "cross-platform authenticator (e.g. iPhone, hardware key)"
     : "platform authenticator";
@@ -242,7 +245,7 @@ function renderTrades(): void {
 
 function readToolMeta(meta: unknown): VerifiedApprovalToolMeta | undefined {
   if (!meta || typeof meta !== "object") return undefined;
-  const ns = (meta as Record<string, unknown>)[VERIFIED_APPROVAL_META_KEY];
+  const ns = (meta as Record<string, unknown>)[VERIFIED_APPROVAL_TOOL_META_KEY];
   if (!ns || typeof ns !== "object") return undefined;
   const required = (ns as Record<string, unknown>).required;
   if (required !== VERIFIED_APPROVAL_REQUIRED) return undefined;
@@ -349,7 +352,7 @@ async function callTradeWithEvidence(
         name: TOOL_NAME,
         arguments: args,
         _meta: {
-          [VERIFIED_APPROVAL_META_KEY]: {
+          [VERIFIED_APPROVAL_REQUEST_META_KEY]: {
             method: "webauthn",
             challengeId,
             response,
@@ -374,7 +377,7 @@ async function handleSubmit(client: Client, args: PlaceTradeArgs): Promise<void>
     // — kept for future tools that don't require approval.
     return;
   }
-  const cls: VerifiedApprovalAuthenticatorClass =
+  const cls: AuthenticatorClass =
     policy.authenticatorClass ?? VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM;
 
   log("requesting approval challenge…");
