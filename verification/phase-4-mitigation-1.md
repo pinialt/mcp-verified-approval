@@ -143,77 +143,213 @@ behaviour is, by definition, a hardware-level concern. The unit tests
 confirm the wire shape still serializes, the existing schema still
 validates, and the assertion verification path is unchanged.
 
-## What was not run — hardware observation portion
+## Hardware setup constraint
 
-The brief calls for four hardware scenarios — A (default selection),
-B (actively try Touch ID), C (actively try hybrid), and a control
-(same as A but without the change). Each requires a human at the
-keyboard to invoke the OS picker and physically press Touch ID or
-scan a QR code with an iPhone for Face ID. These were **not run** in
-this report.
+Current macOS / Safari (versions above) does not offer a "save on this
+device only" option during passkey enrollment in Safari — the only
+save destination Safari surfaces is iCloud Keychain. The Phase 3
+hardware run captured a `["internal"]`-only credential because the
+Mac password app at that time did surface a "this device only"
+option; current macOS/Safari does not.
 
-The autonomous portion of this task can verify:
-- the `hints: ["hybrid"]` field is present in the source emitted by
-  `approval/challenge/create` (it is — see the diff);
-- the type system accepts it without a cast (it does — `npx tsc -p
-  server/tsconfig.json --noEmit` is clean);
-- existing unit tests still pass (they do — 11/11).
+Chrome on the same Mac does offer a "save in Chrome" option in
+addition to iCloud Keychain. A Chrome-saved passkey lives in Chrome's
+own credential store and advertises `["internal"]` only — useful for
+re-creating the Phase 3 dual-credential setup but NOT useful for the
+hint experiment, since the hint is supposed to steer toward `hybrid`
+and a Chrome-internal credential has no `hybrid` capability for the
+hint to surface.
 
-The autonomous portion **cannot** verify:
-- whether Safari forwards the field to the macOS system picker;
-- whether the macOS system picker changes its default selection in
-  response to the hint when an iCloud-synced credential is locally
-  available;
-- whether Touch ID is offered, hidden, demoted, or unchanged in the
-  picker UI;
-- whether the user can actively select Touch ID despite the hint
-  (Scenario B);
-- whether the user can actively select hybrid (Scenario C);
-- the difference, if any, between Safari and Chrome on the same
-  hardware with the same hint (the L3-vs-not disambiguation).
+This constraint is actually convenient: the hint experiment only
+needs a single iCloud-Keychain credential (transports
+`["hybrid","internal"]`) — that is the credential class for which the
+question "does the OS picker prefer hybrid or local?" is meaningful.
+A single-credential setup is a cleaner A/B than the Phase 3
+dual-credential setup because the picker only has to decide between
+transports, not also between credentials.
 
-These are observations of UI behaviour outside the process that this
-agent runs in. They are not skipped because of cost; they are skipped
-because the agent has no eyes on the macOS system picker.
+## Hardware observations
 
-The remaining test plan is preserved in
-[the prior turn of this conversation] and at the top of the
-`screenshots/` directory: control first against a server with this
-commit reverted, then A → B → C against the new server, optionally a
-Chrome run of A if the Safari run is ambiguous. Per-scenario captures
-needed: verbatim picker title, every option offered, default
-highlight, gesture path actually taken, screenshot, server log
-`credentialId` consumed, trade success.
+Hardware: same Mac as Phase 3 hardware run. **Touch ID is not
+available on this Mac** — the local biometric path the macOS picker
+falls back to is the macOS login password. This does not invalidate
+the test. The threat-model question is "does the gesture happen on a
+display surface outside the (hypothetical) compromised client's
+control?" Whatever local-presentation path macOS chooses (Touch ID,
+password, Apple Watch) lands on the same Mac display the client
+controls. The hint experiment is asking whether the OS picker can be
+nudged AWAY from any of those local paths and toward the cross-device
+QR/iPhone path.
 
-## Cannot yet recommend an SEP framing
+### Scenario A — Safari, hint applied
 
-The brief's deliverable includes a clear statement of the form
-*"Apple's picker [does / does not / partially does] respect
-`authenticatorAttachment: cross-platform` for synced credentials in
-this configuration"* and a recommendation for how the SEP should
-treat the display-tampering claim. **Both are pending the hardware
-run.** Three possible outcomes and their SEP implications:
+Server: investigation branch, commit `f680443`, emits `hints:
+["hybrid"]` in `approval/challenge/create`.
+
+Single iCloud-Keychain credential enrolled (transports
+`["hybrid","internal"]`).
+
+After clicking Approve in the in-app modal, the macOS system Sign-In
+sheet appeared with:
+- Title: "Sign In"
+- Body: 'Sign in to "localhost" with your passkey for "MCP Demo
+  User"?'
+- A row labeled "Passkey From" with the macOS Passwords-app icon on
+  the right. **Row not clickable in Safari** — no dropdown, no hidden
+  submenu.
+- A passkey icon and the word "Passkey" centered.
+- Cancel + Continue buttons.
+
+**No "Use a phone or tablet" option, no QR affordance, no "Other
+options" menu, no chevron, nothing that would surface the hybrid
+transport.** The dialog had exactly two terminal actions: Cancel
+(closes the sheet, no further options surfaced) or Continue (proceeds
+with the local presentation of the iCloud-Keychain credential).
+
+Continue → macOS asked for the user's login password (substituting
+for Touch ID on Mac without Touch ID hardware). The user entered
+their password on the same Mac display. The assertion completed.
+
+Server log:
+```
+[approval] consumed f420421d-8229-45d8-8292-8b229bc4bca1 for place_trade; counter 0 -> 0
+[trade] 2026-05-02T08:25:13.814Z buy 10 AAPL @ 150.5 -> faa7f17b-ca96-45ea-bd33-28677a9397ba
+```
+
+Counter `0 -> 0` is consistent with synced-passkey behaviour
+(Phase 3 Finding 1).
+
+Trade succeeded. Screenshot: `screenshots/A-safari.png`.
+
+**Observation:** the `hints: ["hybrid"]` field, although emitted on
+the wire by the server, did NOT cause Safari/macOS to offer the
+hybrid (cross-device) transport. The picker went directly to local
+presentation of the synced credential.
+
+### Scenario B — Safari, try Touch ID
+
+**Not directly applicable on this hardware** — Mac has no Touch ID.
+The closest analogue is "complete the local presentation," which is
+what Scenario A did via password. No separate gesture or path was
+offered that we could explicitly select.
+
+The threat-model property the test is examining (is the gesture on a
+client-controlled display?) is unchanged by the absence of Touch ID:
+password entry on the same Mac display has the same threat profile
+as Touch ID on the same Mac.
+
+### Scenario C — Safari, try iPhone via hybrid
+
+**No path to invoke this from the Safari picker.** The Sign-In sheet
+in Scenario A offered no "Use a phone or tablet" option, no
+"different device" menu, and clicking Cancel does not surface
+additional options in Safari (in contrast to Chrome, which does show
+its own fallback menu after cancel — captured separately).
+
+With one iCloud-Keychain credential enrolled and `hints: ["hybrid"]`
+set, the cross-device transport was unreachable through Safari's
+flow.
+
+### Scenario A — Chrome, hint applied
+
+Same investigation-branch server, same `hints: ["hybrid"]` on the
+wire. iCloud Keychain credential is shared with Safari (iCloud
+Keychain dedupes by (RP, userHandle); a fresh enrollment attempt in
+Chrome reused the same credential rather than creating a new one).
+`/credentials` continued to show one entry, transports
+`["hybrid","internal"]`.
+
+After clicking Approve in the in-app modal, **the macOS system
+Sign-In sheet that appeared was visually identical to Safari's** —
+same title, same body, same single "Passkey From Passwords" row,
+same Cancel/Continue buttons. No hybrid option visible. Screenshot:
+`screenshots/A-chrome.png` (system sheet) and
+`screenshots/A-chrome-after-cancel.png` (Chrome fallback).
+
+When Cancel was pressed on the system sheet, Chrome's own
+browser-rendered fallback modal appeared:
+
+- Title: "Use a saved passkey for localhost"
+- Section "On this device": "MCP Demo User · Apple Passwords"
+  (chevron, clickable — leads back to the Apple system sheet).
+- Section "On other devices": "Use a phone or tablet" (chevron,
+  clickable — would lead to the cross-device QR flow).
+- Cancel button.
+
+This Chrome-fallback modal IS browser-rendered (not the macOS system
+sheet) and DOES surface the hybrid path under "On other devices".
+**Whether the hint caused Chrome to surface this option is the
+control-run question**: if Chrome's fallback shows "Use a phone or
+tablet" without the hint as well, the hint is not what's exposing
+it; if it doesn't, the hint is influencing Chrome's fallback content.
+
+Critical observation for the threat model: the fallback modal
+appears only AFTER the user clicks Cancel on the Apple system sheet.
+The natural user flow (Approve → Continue) never reaches it. An
+attacker controlling the client cannot force the user to click
+Cancel; in the normal flow the user signs locally on the Apple
+sheet, on the Mac display the (hypothetically compromised) client
+controls.
+
+### Control — Safari, no hint (PENDING)
+
+To be captured against `main` (which does not emit the `hints` field).
+Same single iCloud-Keychain credential setup. Single-cell question:
+does the Safari picker behave identically to Scenario A (proving the
+hint is moot) or differently (proving the hint suppressed/changed
+something)?
+
+### Chrome cross-check (PENDING)
+
+Required to disambiguate "Safari is dropping the field" from "Apple's
+system picker ignores the hint." Chrome 147 is well past the L3
+implementation cutoff (Chrome 122) and forwards `hints` to the
+platform. If Chrome on the same Mac shows the same single-option
+sheet as Safari, the conclusion is firmly that Apple's system picker
+is ignoring the hint; if Chrome shows additional options surfaced by
+the hint, the conclusion is that WebKit is dropping the field.
+
+User has noted that in Chrome, clicking Cancel on the system Sign-In
+sheet brings up an additional Chrome-internal menu. That suggests
+Chrome's flow has a richer fallback affordance than Safari's, but
+whether it's hint-influenced needs both with-hint and without-hint
+captures to compare.
+
+## Preliminary reading — Safari with hint shows no hybrid path
+
+Scenario A in Safari is unambiguous on the narrow question of "does
+the hint cause the picker to surface a hybrid option": **it does
+not**. With `hints: ["hybrid"]` set on the wire and a synced
+credential locally available, Safari/macOS skipped any picker that
+would have offered a cross-device path and went directly to local
+presentation of the credential.
+
+This is not yet the full answer — the control run determines whether
+this is "Safari's picker ignores the hint" or "Safari's picker happens
+to skip hybrid for locally-resolvable creds regardless." But on its
+face, the result is consistent with Phase 3 Finding 4's prediction:
+the cross-platform-class capability filter does not deliver use-time
+display-surface separation for synced credentials.
+
+## SEP framing — preliminary lean
+
+The three-row decision table from the original task plan:
 
 | Outcome | SEP implication |
 |---|---|
-| Picker skips Touch ID for the synced cred when `hints: ["hybrid"]` is set | The hint is a load-bearing mitigation. SEP can keep the display-surface-separation claim, contingent on RP setting hints. |
-| Picker behaviour is identical to control | The hint is advisory and Apple ignores it. SEP must narrow the claim — argument-binding + freshness + single-use are the load-bearing properties; display-surface separation is a capability check, not a use-time guarantee. |
-| Picker partially respects (e.g. demotes Touch ID but still offers it) | Mixed. The SEP discusses the hint as one ingredient of a layered defense, not a guarantee. |
+| Picker skips local for the synced cred when `hints: ["hybrid"]` is set | Hint is a load-bearing mitigation. SEP can keep the display-surface-separation claim, contingent on RP setting hints. |
+| Picker behaviour is identical to control | Hint is advisory and Apple ignores it. SEP must narrow the claim — argument-binding + freshness + single-use are load-bearing; display-surface separation is a capability check, not a use-time guarantee. |
+| Picker partially respects | Mixed; SEP discusses the hint as one ingredient of layered defense, not a guarantee. |
 
-The choice between these branches is exactly the question the
-hardware run is supposed to answer. Asserting any of them now would
-be the kind of overclaim Phase 3 Finding 4 explicitly warns against.
+Scenario A's outcome rules out row 1 for Safari at minimum. Rows 2
+and 3 are still in play depending on the control. Final
+recommendation pending control + Chrome captures.
 
-## Status and next step for the human
+## Status
 
-- Branch `phase-4-mitigation-1-investigation` exists, has commit
-  `f680443`, is unmerged.
+- Branch `phase-4-mitigation-1-investigation` unmerged.
 - Tests pass.
 - DECISIONS.md unchanged, per the brief.
-- The hardware test plan is ready to execute as soon as a human is at
-  the keyboard. When that happens, this report should be re-opened and
-  the four scenario blocks filled in, plus the recommendation table
-  above resolved into a single recommendation.
-
-Until then, the SEP's framing of the display-tampering claim should be
-treated as still-undecided. Phase 3 Finding 4 stands.
+- Scenario A captured (Safari + hint).
+- Control (Safari, no hint) and Chrome cross-checks pending hardware
+  run.
