@@ -8,13 +8,11 @@ Status: Draft
 Type: Standards Track
 Created: 2026-05-02
 PR: TBD
-Supersedes: TBD
-Updates: TBD
 ```
 
 ## 1. Preamble
 
-- Title, author, status (draft), type (Standards Track), created, PR number, superseded/updates fields.
+See the metadata block at the top of this document.
 
 ## 2. Abstract
 
