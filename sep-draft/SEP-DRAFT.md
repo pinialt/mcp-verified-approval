@@ -186,21 +186,204 @@ Normative requirements:
 
 ### 4.4 New methods
 
+This proposal introduces three JSON-RPC methods following the standard MCP method-naming convention — slash-separated, no reverse-DNS prefix because they are spec-level methods rather than vendor extensions. The methods form two ceremonies: *enrollment* (`approval/enroll/begin` and `approval/enroll/finish`, run once per credential) and *challenge issuance* (`approval/challenge/create`, run before each annotated tool call). All three require the server to have declared the verified-approval capability per §4.3; a server that has not declared the capability MUST respond with JSON-RPC error `-32601` ("Method not found") to any of these methods.
+
 #### 4.4.1 `approval/enroll/begin`
 
-- Request/response shape, semantics.
+This method initiates WebAuthn credential registration. The server constructs the WebAuthn `PublicKeyCredentialCreationOptionsJSON` object that the client passes to `navigator.credentials.create()`.
+
+**Request.** This method takes no parameters. The `params` field, if present, MUST be ignored.
+
+**Response.** A single field `options` carrying the WebAuthn creation options:
+
+```json
+{
+  "options": {
+    "rp": { "id": "example.com", "name": "Example RP" },
+    "user": {
+      "id": "<base64url userHandle>",
+      "name": "alice@example.com",
+      "displayName": "Alice"
+    },
+    "challenge": "<base64url 32-byte registration challenge>",
+    "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+    "timeout": 300000,
+    "attestation": "none",
+    "excludeCredentials": [
+      { "type": "public-key", "id": "<base64url credentialId>", "transports": ["usb"] }
+    ],
+    "authenticatorSelection": {
+      "residentKey": "preferred",
+      "userVerification": "required"
+    }
+  }
+}
+```
+
+Fields under `options` follow the WebAuthn Level 3 specification ([https://www.w3.org/TR/webauthn-3/](https://www.w3.org/TR/webauthn-3/)) for `PublicKeyCredentialCreationOptionsJSON`. This proposal constrains a subset of those fields; the rest are at the server's discretion.
+
+Normative requirements:
+
+- Servers MUST issue a fresh registration challenge per call. Reusing a challenge across calls is a protocol violation.
+- Servers MUST track the registration challenge so the corresponding `approval/enroll/finish` call can verify against it.
+- Servers MUST set `authenticatorSelection.userVerification` to `"required"` so a presence-only authenticator gesture cannot complete enrollment.
+- Servers SHOULD set a TTL on the registration challenge; if unstated, implementations SHOULD default to 5 minutes.
+- The response MUST include `excludeCredentials` listing the user's already-enrolled credential IDs — an empty array if no credentials are enrolled. This causes the WebAuthn layer in the browser to refuse re-enrollment of the same authenticator before reaching the server. Server-side defense-in-depth against `excludeCredentials` bypass is specified in §4.4.2.
 
 #### 4.4.2 `approval/enroll/finish`
 
-- Request/response shape, semantics.
+This method completes WebAuthn credential registration. The client sends the registration response from `navigator.credentials.create()`; the server verifies it against the challenge issued by the corresponding `approval/enroll/begin` call and, on success, persists the new credential.
+
+**Request.** A `params` object with a single `response` field carrying the WebAuthn registration response (`PublicKeyCredentialAttestationResponseJSON` per the WebAuthn Level 3 spec):
+
+```json
+{
+  "response": {
+    "id": "<base64url credentialId>",
+    "rawId": "<base64url credentialId>",
+    "type": "public-key",
+    "response": {
+      "clientDataJSON": "<base64url>",
+      "attestationObject": "<base64url>",
+      "transports": ["usb"]
+    },
+    "authenticatorAttachment": "cross-platform",
+    "clientExtensionResults": {}
+  }
+}
+```
+
+**Response.** A confirmation object identifying the newly-stored credential:
+
+```json
+{
+  "success": true,
+  "credentialId": "<base64url credentialId>",
+  "createdAt": "<ISO-8601 timestamp>"
+}
+```
+
+Normative requirements:
+
+- Servers MUST verify the registration response against the challenge issued by the corresponding `approval/enroll/begin`. Mismatched challenges MUST be rejected.
+- Servers MUST verify that the authenticator performed user verification. A credential whose registration response did not assert UV MUST be rejected.
+- Servers MUST verify the attestation per the policy the server applies. Implementations using `attestation: "none"` MUST NOT skip verification of the registration response itself; they merely accept any attestation issuer.
+- Servers MUST persist the credential's `publicKey`, `credentialId`, `counter`, `transports`, and `userHandle` for use during subsequent assertions.
+- Servers MUST reject registration if the `credentialId` is already enrolled. This is server-side defense-in-depth: the WebAuthn-layer `excludeCredentials` enforcement at the browser is bypassable when the attestation does not sign over `clientDataJSON`, so the server MUST independently check for re-enrollment after WebAuthn verification but before persisting the new record. Reject with the structured error from §4.10 (the credential-already-enrolled reason).
+- Servers MUST reject registration if the registration challenge has expired or has already been consumed.
 
 #### 4.4.3 `approval/challenge/create`
 
-- Request/response shape, semantics.
+This method is invoked by the client immediately before each call to a tool requiring verified approval. The server constructs a challenge envelope binding the proposed call's arguments to a fresh nonce; the envelope contains the WebAuthn `PublicKeyCredentialRequestOptionsJSON` the client passes to `navigator.credentials.get()`.
+
+**Request.** A `params` object with two fields:
+
+- `toolName`: the name of the tool to be invoked.
+- `arguments`: the proposed arguments object.
+
+```json
+{
+  "toolName": "delete_resource",
+  "arguments": { "resourceId": "abc123" }
+}
+```
+
+**Response.** A challenge envelope:
+
+```json
+{
+  "challengeId": "<server-issued opaque identifier>",
+  "displayText": "Permanently delete resource abc123",
+  "expiresAt": "<ISO-8601 timestamp>",
+  "requestOptions": {
+    "challenge": "<base64url 64-byte (nonce || actionHash)>",
+    "rpId": "example.com",
+    "allowCredentials": [
+      { "type": "public-key", "id": "<base64url credentialId>", "transports": ["usb"] }
+    ],
+    "userVerification": "required",
+    "timeout": 60000
+  }
+}
+```
+
+Field semantics:
+
+- `challengeId`: an opaque server-issued identifier; the client echoes it back in the evidence on `tools/call` (§4.5). Used by the server to look up the pending challenge state at verification time.
+- `displayText`: a human-readable description of the action being approved. The client SHOULD present this verbatim to the user in the approval surface.
+- `expiresAt`: an ISO-8601 timestamp after which the challenge is no longer accepted.
+- `requestOptions`: the WebAuthn `PublicKeyCredentialRequestOptionsJSON` for the client to pass to `navigator.credentials.get()`. The `challenge` field encodes the wire challenge bytes — `nonce || actionHash` — that the authenticator signs over.
+
+Normative requirements:
+
+- Servers MUST verify that the named tool is registered with the verified-approval annotation per §4.2. If not, reject with the appropriate structured error from §4.10.
+- Servers MUST canonicalize the supplied arguments per §4.6 before computing the action hash.
+- Servers MUST compute the action hash from `(toolName, canonicalArguments, serverId)` per §4.6.
+- Servers MUST construct the wire challenge bytes as `nonce || actionHash` — a 32-byte fresh nonce concatenated with the 32-byte action hash — and base64url-encode them into `requestOptions.challenge`.
+- Servers MUST associate the challenge server-side with the tuple `(toolName, canonicalArguments, serverId)` so the verification rules in §4.8 can recompute and compare at call time.
+- Servers SHOULD set `expiresAt` no further in the future than a server-defined TTL; if unstated, implementations SHOULD default to 60 seconds.
+- Servers MUST populate `requestOptions.allowCredentials` with the user's enrolled credentials filtered by the tool's `authenticatorClass` policy per §4.7.
+- Servers MUST set `requestOptions.userVerification` to `"required"`.
+- Servers MUST construct `displayText` from a server-side describe function applied to the supplied arguments. The `displayText` MUST be human-readable and accurately describe the action being approved. This is security-relevant — the user's understanding of what they are signing depends on it matching the action hash bound by the same call. See §8 on display tampering for the threat-model boundaries of this guarantee.
 
 ### 4.5 Evidence on `tools/call`: `params._meta["io.modelcontextprotocol/verified-approval"]`
 
-- Where the assertion travels, what the server expects.
+When invoking a tool whose listing carries the verified-approval annotation, the client MUST attach the WebAuthn assertion in the request's `_meta` field at the namespaced key `"io.modelcontextprotocol/verified-approval"`. The value at this key has the shape:
+
+```typescript
+interface ApprovalEvidence {
+  method: "webauthn";
+  challengeId: string;
+  response: AuthenticationResponseJSON;
+}
+```
+
+Field semantics:
+
+- `method`: the discriminator identifying the assertion family. Today the only conformant value is `"webauthn"`. Future versions of this specification MAY define additional values.
+- `challengeId`: the identifier from the matching `approval/challenge/create` response. Used by the server to look up the pending challenge state.
+- `response`: the WebAuthn `PublicKeyCredentialAuthenticationResponseJSON` produced by `navigator.credentials.get()`, unmodified.
+
+A complete `tools/call` request carrying evidence:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "delete_resource",
+    "arguments": { "resourceId": "abc123" },
+    "_meta": {
+      "io.modelcontextprotocol/verified-approval": {
+        "method": "webauthn",
+        "challengeId": "<challengeId from approval/challenge/create>",
+        "response": {
+          "id": "<base64url credentialId>",
+          "rawId": "<base64url credentialId>",
+          "type": "public-key",
+          "response": {
+            "clientDataJSON": "<base64url>",
+            "authenticatorData": "<base64url>",
+            "signature": "<base64url>",
+            "userHandle": "<base64url>"
+          },
+          "authenticatorAttachment": "cross-platform",
+          "clientExtensionResults": {}
+        }
+      }
+    }
+  }
+}
+```
+
+Normative requirements:
+
+- Clients MUST include this evidence in `params._meta` for every call to a tool that carries the verified-approval annotation.
+- Clients MUST set `method` to the literal string `"webauthn"`.
+- Clients MUST set `challengeId` to the value received from the immediately preceding `approval/challenge/create` for the same tool and arguments. Reusing a `challengeId` across calls is a protocol violation; the server's single-use enforcement (§4.8) will reject the second use.
+- Clients MUST forward the WebAuthn assertion response unmodified.
+- Servers MUST verify the evidence per the verification rules in §4.8 before executing the tool.
+- Servers MUST reject the call with the structured error from §4.10 when evidence is missing, malformed, or fails any verification step.
+- Servers MUST NOT execute the tool if any verification step fails.
 
 ### 4.6 Argument canonicalization (RFC 8785) and action-hash construction
 
