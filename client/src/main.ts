@@ -1,30 +1,27 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpError } from "@modelcontextprotocol/sdk/types.js";
-import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
-import type {
-  AuthenticationResponseJSON,
-  PublicKeyCredentialCreationOptionsJSON,
-  PublicKeyCredentialRequestOptionsJSON,
-  RegistrationResponseJSON,
-} from "@simplewebauthn/browser";
 import { z } from "zod";
 import {
-  APPROVAL_CHALLENGE_CREATE_METHOD,
-  APPROVAL_ENROLL_BEGIN_METHOD,
-  APPROVAL_ENROLL_FINISH_METHOD,
-  APPROVAL_ERROR_CODE,
-  VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM,
-  VERIFIED_APPROVAL_META_KEY,
-  VERIFIED_APPROVAL_REQUIRED,
-  policyAcceptsTransports,
-  type ApprovalChallenge,
   type PlaceTradeArgs,
   type PlaceTradeResult,
   type TradeRecord,
-  type VerifiedApprovalAuthenticatorClass,
-  type VerifiedApprovalToolMeta,
 } from "@mcp-sec/shared";
+import {
+  APPROVAL_ERROR_CODE,
+  VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM,
+  VERIFIED_APPROVAL_REQUEST_META_KEY,
+  VERIFIED_APPROVAL_REQUIRED,
+  policyAcceptsTransports,
+  type ApprovalChallenge,
+  type AuthenticationResponseJSON,
+  type AuthenticatorClass,
+  type VerifiedApprovalToolMeta,
+} from "mcp-verified-approval/shared";
+import {
+  createApprovalClient,
+  type ApprovalClient,
+} from "mcp-verified-approval/client";
 
 const SERVER_BASE = "http://localhost:3030";
 const SERVER_URL = `${SERVER_BASE}/mcp`;
@@ -153,7 +150,7 @@ function updateSubmitButtonEligibility(): void {
     submitEl.removeAttribute("title");
     return;
   }
-  const cls: VerifiedApprovalAuthenticatorClass =
+  const cls: AuthenticatorClass =
     policy.authenticatorClass ?? VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM;
   const eligible = enrolledCredentials.some((c) => policyAcceptsTransports(cls, c.transports));
   if (eligible) {
@@ -165,55 +162,26 @@ function updateSubmitButtonEligibility(): void {
   }
 }
 
-function classDescription(cls: VerifiedApprovalAuthenticatorClass): string {
+function classDescription(cls: AuthenticatorClass): string {
   return cls === VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM
     ? "cross-platform authenticator (e.g. iPhone, hardware key)"
     : "platform authenticator";
 }
 
-async function enroll(client: Client): Promise<void> {
+async function enroll(approvalClient: ApprovalClient): Promise<void> {
   enrollBtn.disabled = true;
   try {
-    elog("requesting registration options…");
-    const beginRes = (await client.request(
-      { method: APPROVAL_ENROLL_BEGIN_METHOD },
-      z.object({ options: z.unknown() }),
-    )) as { options: PublicKeyCredentialCreationOptionsJSON };
-    const optionsJSON = beginRes.options;
-    elog(
-      `options received (rpId=${optionsJSON.rp.id}, challenge ${optionsJSON.challenge.slice(0, 8)}…)`,
-    );
-    elog("invoking authenticator — Mac may show QR for hybrid transport, scan with iPhone");
-    let response: RegistrationResponseJSON;
+    elog("starting enrollment ceremony — Mac may show QR for hybrid transport, scan with iPhone");
     try {
-      response = await startRegistration({ optionsJSON });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (err instanceof Error && err.name === "NotAllowedError") {
-        elog("authenticator ceremony cancelled or timed out", "err");
-      } else {
-        elog(`authenticator failed: ${msg}`, "err");
-      }
-      return;
-    }
-    elog(`authenticator response received (id ${shortenId(response.id)})`);
-
-    elog("submitting to approval/enroll/finish…");
-    try {
-      const finishRes = (await client.request(
-        { method: APPROVAL_ENROLL_FINISH_METHOD, params: { response } },
-        z.object({
-          success: z.literal(true),
-          credentialId: z.string(),
-          createdAt: z.string(),
-        }),
-      )) as { success: true; credentialId: string; createdAt: string };
+      const finishRes = await approvalClient.enroll();
       elog(
         `enrolled  credentialId=${shortenId(finishRes.credentialId)}  createdAt=${finishRes.createdAt}`,
         "ok",
       );
     } catch (err) {
-      if (err instanceof McpError && err.code === APPROVAL_ERROR_CODE) {
+      if (err instanceof Error && err.name === "NotAllowedError") {
+        elog("authenticator ceremony cancelled or timed out", "err");
+      } else if (err instanceof McpError && err.code === APPROVAL_ERROR_CODE) {
         const reason = (err.data as { reason?: string } | undefined)?.reason ?? "unknown";
         elog(`enrollment rejected (${reason}): ${err.message}`, "err");
       } else {
@@ -238,21 +206,6 @@ function renderTrades(): void {
     li.textContent = `${t.executedAt}  ${t.side} ${t.quantity} ${t.symbol} @ ${t.limit}  →  ${t.tradeId}`;
     tradesEl.appendChild(li);
   }
-}
-
-function readToolMeta(meta: unknown): VerifiedApprovalToolMeta | undefined {
-  if (!meta || typeof meta !== "object") return undefined;
-  const ns = (meta as Record<string, unknown>)[VERIFIED_APPROVAL_META_KEY];
-  if (!ns || typeof ns !== "object") return undefined;
-  const required = (ns as Record<string, unknown>).required;
-  if (required !== VERIFIED_APPROVAL_REQUIRED) return undefined;
-  const authenticatorClass = (ns as Record<string, unknown>).authenticatorClass;
-  return {
-    required: VERIFIED_APPROVAL_REQUIRED,
-    ...(authenticatorClass === "platform" || authenticatorClass === "cross-platform"
-      ? { authenticatorClass }
-      : {}),
-  };
 }
 
 async function connect(): Promise<Client> {
@@ -293,38 +246,6 @@ function showApprovalDialog(challenge: ApprovalChallenge, classHint: string | un
   });
 }
 
-const ChallengeResponseSchema = z.object({
-  challengeId: z.string(),
-  displayText: z.string(),
-  expiresAt: z.string(),
-  requestOptions: z.object({
-    challenge: z.string(),
-    rpId: z.string().optional(),
-    allowCredentials: z
-      .array(
-        z.object({
-          type: z.literal("public-key"),
-          id: z.string(),
-          transports: z.array(z.string()).optional(),
-        }),
-      )
-      .optional(),
-    userVerification: z.enum(["required", "preferred", "discouraged"]).optional(),
-    timeout: z.number().optional(),
-    extensions: z.record(z.string(), z.unknown()).optional(),
-  }),
-});
-
-async function requestChallenge(client: Client, args: PlaceTradeArgs): Promise<ApprovalChallenge> {
-  return (await client.request(
-    {
-      method: APPROVAL_CHALLENGE_CREATE_METHOD,
-      params: { toolName: TOOL_NAME, arguments: args },
-    },
-    ChallengeResponseSchema,
-  )) as ApprovalChallenge;
-}
-
 const TradeResultSchema = z
   .object({
     content: z.array(z.unknown()),
@@ -349,7 +270,7 @@ async function callTradeWithEvidence(
         name: TOOL_NAME,
         arguments: args,
         _meta: {
-          [VERIFIED_APPROVAL_META_KEY]: {
+          [VERIFIED_APPROVAL_REQUEST_META_KEY]: {
             method: "webauthn",
             challengeId,
             response,
@@ -366,7 +287,11 @@ function isApprovalError(err: unknown): err is McpError {
   return err instanceof McpError && err.code === APPROVAL_ERROR_CODE;
 }
 
-async function handleSubmit(client: Client, args: PlaceTradeArgs): Promise<void> {
+async function handleSubmit(
+  client: Client,
+  approvalClient: ApprovalClient,
+  args: PlaceTradeArgs,
+): Promise<void> {
   const policy = toolApprovalPolicy.get(TOOL_NAME);
   if (!policy || policy.required !== VERIFIED_APPROVAL_REQUIRED) {
     log(`call ${TOOL_NAME} ${JSON.stringify(args)} (no approval required)`);
@@ -374,51 +299,54 @@ async function handleSubmit(client: Client, args: PlaceTradeArgs): Promise<void>
     // — kept for future tools that don't require approval.
     return;
   }
-  const cls: VerifiedApprovalAuthenticatorClass =
+  const cls: AuthenticatorClass =
     policy.authenticatorClass ?? VERIFIED_APPROVAL_CLASS_CROSS_PLATFORM;
 
   log("requesting approval challenge…");
-  let challenge: ApprovalChallenge;
+  let outcome;
   try {
-    challenge = await requestChallenge(client, args);
+    outcome = await approvalClient.requestApprovalEvidence({
+      toolName: TOOL_NAME,
+      arguments: args,
+      onChallengeReceived: async (challenge) => {
+        log(`challenge received: ${challenge.displayText}`);
+        const approved = await showApprovalDialog(challenge, classDescription(cls));
+        if (!approved) return "decline";
+        log("user approved");
+        log(`invoking authenticator (${cls}) — Mac may show passkey sheet, possibly QR for hybrid…`);
+        return "approve";
+      },
+    });
   } catch (err) {
-    if (isApprovalError(err)) {
+    if (err instanceof Error && err.name === "NotAllowedError") {
+      log("authenticator ceremony cancelled or timed out", "err");
+    } else if (isApprovalError(err)) {
       const reason = (err.data as { reason?: string } | undefined)?.reason ?? "unknown";
-      log(`challenge rejected (${reason}): ${err.message}`, "err");
+      log(`approval ceremony rejected (${reason}): ${err.message}`, "err");
     } else {
-      log(`challenge request failed: ${err instanceof Error ? err.message : String(err)}`, "err");
+      log(`approval ceremony failed: ${err instanceof Error ? err.message : String(err)}`, "err");
     }
     return;
   }
-  log(`challenge received: ${challenge.displayText}`);
 
-  const approved = await showApprovalDialog(challenge, classDescription(cls));
-  if (!approved) {
+  if (outcome.status === "declined") {
     log("user declined", "err");
     return;
   }
-  log("user approved");
-
-  log(`invoking authenticator (${cls}) — Mac may show passkey sheet, possibly QR for hybrid…`);
-  let response: AuthenticationResponseJSON;
-  try {
-    response = await startAuthentication({
-      optionsJSON: challenge.requestOptions as PublicKeyCredentialRequestOptionsJSON,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (err instanceof Error && err.name === "NotAllowedError") {
-      log("authenticator ceremony cancelled or timed out", "err");
-    } else {
-      log(`authenticator failed: ${msg}`, "err");
-    }
+  if (outcome.status === "no_eligible_credential") {
+    log("no eligible credential enrolled for this tool", "err");
     return;
   }
-  log(`authenticator response received (id ${shortenId(response.id)})`);
+  log(`authenticator response received (id ${shortenId(outcome.evidence.response.id)})`);
 
   log("submitting tools/call with webauthn evidence…");
   try {
-    const result = await callTradeWithEvidence(client, args, challenge.challengeId, response);
+    const result = await callTradeWithEvidence(
+      client,
+      args,
+      outcome.evidence.challengeId,
+      outcome.evidence.response,
+    );
     log(`trade ok  tradeId=${result.tradeId}  executedAt=${result.executedAt}`, "ok");
     sessionTrades.push({ ...args, tradeId: result.tradeId, executedAt: result.executedAt });
     renderTrades();
@@ -450,10 +378,19 @@ async function main(): Promise<void> {
   setStatus("ok", "connected");
   log("connected");
 
+  const approvalClient = createApprovalClient({
+    // Bridge the library's structural request signature to the SDK's
+    // typed request signature. The cast is only on params (the SDK has a
+    // narrower _meta-aware type than `unknown`); the call itself is
+    // unchanged.
+    request: (req, schema) =>
+      client.request(req as { method: string; params?: Record<string, unknown> }, schema),
+  });
+
   await refreshEnrolled();
   enrollBtn.disabled = false;
   enrollBtn.addEventListener("click", () => {
-    void enroll(client);
+    void enroll(approvalClient);
   });
 
   let tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
@@ -462,7 +399,7 @@ async function main(): Promise<void> {
     toolsEl.innerHTML = "";
     for (const t of tools) {
       const li = document.createElement("li");
-      const meta = readToolMeta(t._meta);
+      const meta = approvalClient.detectApprovalRequirement(t);
       let badge = "";
       if (meta) {
         toolApprovalPolicy.set(t.name, meta);
@@ -496,7 +433,7 @@ async function main(): Promise<void> {
         quantity: Number(data.get("quantity")),
         limit: Number(data.get("limit")),
       };
-      await handleSubmit(client, args);
+      await handleSubmit(client, approvalClient, args);
     } finally {
       // Re-evaluate eligibility — credentials may have been added/removed
       // out-of-band, or the call may have failed in a way that still leaves

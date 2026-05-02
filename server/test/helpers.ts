@@ -7,16 +7,16 @@ import WebAuthnEmulator, {
   PasskeysCredentialsMemoryRepository,
 } from "nid-webauthn-emulator";
 import { expect } from "vitest";
+import { EXPECTED_ORIGIN } from "@mcp-sec/shared";
 import {
   APPROVAL_CHALLENGE_CREATE_METHOD,
   APPROVAL_ENROLL_BEGIN_METHOD,
   APPROVAL_ENROLL_FINISH_METHOD,
   APPROVAL_ERROR_CODE,
-  EXPECTED_ORIGIN,
-  VERIFIED_APPROVAL_META_KEY,
+  VERIFIED_APPROVAL_REQUEST_META_KEY,
   type ApprovalChallenge,
   type ApprovalErrorReason,
-} from "@mcp-sec/shared";
+} from "mcp-verified-approval/shared";
 
 export const TOOL = "place_trade";
 
@@ -95,7 +95,7 @@ export async function callPlaceTrade(
         name: TOOL,
         arguments: args,
         _meta: {
-          [VERIFIED_APPROVAL_META_KEY]: {
+          [VERIFIED_APPROVAL_REQUEST_META_KEY]: {
             method: "webauthn",
             challengeId,
             response: assertionResponse,

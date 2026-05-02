@@ -18,8 +18,5 @@
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch"
   },
-  "dependencies": {
-    "@simplewebauthn/browser": "^13.3.0",
-    "canonicalize": "^3.0.0"
-  }
+  "dependencies": {}
 }
