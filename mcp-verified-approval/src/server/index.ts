@@ -537,7 +537,7 @@ export function createApprovalGate(config: ApprovalGateConfig): ApprovalGate {
       excludeCredentials: exclude,
       authenticatorSelection: {
         residentKey: "preferred",
-        userVerification: "preferred",
+        userVerification: "required",
       },
       timeout: enrollTimeoutMs,
     });
@@ -566,7 +566,7 @@ export function createApprovalGate(config: ApprovalGateConfig): ApprovalGate {
         expectedChallenge: pending.challenge,
         expectedOrigin,
         expectedRPID: rpId,
-        requireUserVerification: false,
+        requireUserVerification: true,
       });
     } catch (err) {
       pendingEnrollments.delete(userHandle);
