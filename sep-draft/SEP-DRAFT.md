@@ -403,7 +403,7 @@ actionHashBytes = SHA-256( utf8(toolName) || 0x00
 
 The 0x00 byte separates the three fields. A 0x00 byte cannot appear inside a valid UTF-8 identifier or inside JCS output of a JSON value, so the separator is unambiguous: no input could blur the boundaries between fields. The wire challenge bytes (`nonce || actionHash`, base64url-encoded into the WebAuthn challenge field) are constructed per §4.4.3.
 
-`serverId` is an implementation-defined per-server identifier baked into the hash so a challenge issued by server A cannot be replayed against server B even if both have enrolled the same credential. Implementations MAY derive `serverId` from the OAuth issuer URL, a configured constant, or any other stable per-server string. What matters normatively is that distinct servers produce distinct `serverId` values.
+`serverId` is a per-server identifier baked into the hash so a challenge issued by server A cannot be replayed against server B even if both have enrolled the same credential. Servers MUST use a serverId value that is unique across all servers a credential might be enrolled with. Suitable choices include the server's OAuth issuer URL, a stable URL identifier, or a UUID generated at first initialization and persisted across restarts. A constant default value (e.g., `"mcp-default"`) is non-conformant: two servers using the same default produce identical action hashes for identical (toolName, arguments) tuples, enabling cross-server replay.
 
 Normative requirements:
 
@@ -411,6 +411,7 @@ Normative requirements:
 - Both MUST use SHA-256 for the action hash.
 - The action hash MUST be computed as `SHA-256(utf8(toolName) || 0x00 || utf8(canonicalArgsJson) || 0x00 || utf8(serverId))` with the 0x00 byte as separator.
 - Servers MUST keep `serverId` stable across the lifetime of issued challenges; rotating `serverId` while challenges are pending invalidates them.
+- Servers MUST use a serverId value unique across all servers a credential might be enrolled with. Constant default values are non-conformant.
 - Canonicalization MUST be applied to the arguments object as received in the request. Servers MUST NOT apply schema defaults, type coercions, or other transformations to the arguments between canonicalization and action-hash computation.
 
 ### 4.7 Authenticator class policy: capability filter
@@ -671,6 +672,8 @@ The verified-approval ceremony certifies that *some* user gesture occurred again
 
 For synced credentials advertising `["hybrid", "internal"]` (typical of iCloud Keychain and Google Password Manager passkeys), the OS picker presents the local presentation path on the device hosting the client. A compromised client driving that path can display one action description as `displayText` while the signature certifies the argument-bound hash. Empirical confirmation in `verification/phase-4-mitigation-1.md`: WebAuthn Level 3 `hints: ["hybrid"]` is a no-op on macOS 26.4.1 with Safari 26.4 and Chrome 147; the system picker presents the local credential regardless.
 
+More fundamentally, the WebAuthn assertion response does not report which transport was used at sign time. A user signing on a separate phone via genuine cross-device hybrid produces an assertion structurally indistinguishable from a user signing on the local device — both contain `clientDataJSON`, `authenticatorData`, and a valid signature; neither contains a server-verifiable record of the actual signing transport. The `authenticatorAttachment` field is reported by the client, which a compromised client can falsify. Even if the OS picker behavior were stricter, the server would still have no way to confirm whether a signing actually occurred on a separate device.
+
 The cryptographic binding holds; the human-understanding binding is the residual gap. A compromised client lying about `displayText` cannot forge the signature. Mitigations require platform-side changes — per-call attestation of the transport actually used at sign time, or stricter `hints` semantics — documented as Future Work in §8.4.1.
 
 #### 8.3.2 Counter-zero credentials
@@ -703,7 +706,7 @@ The proposal does not mandate a recovery mechanism. Recovery flows depend heavil
 
 #### 8.4.1 Per-assertion transport observability
 
-The most direct mitigation for §8.3.1: WebAuthn assertions reporting the transport actually used at sign time, rather than the credential's advertised transports. A future WebAuthn extension or `clientExtensionResults` field could carry this. The MCP layer would consume it via §4.8's verification flow, promoting the authenticator-class filter from a capability check to a use-time check.
+The WebAuthn Level 3 assertion response carries `clientDataJSON`, `authenticatorData`, and a signature, but no server-verifiable record of which transport the authenticator used at sign time. A future WebAuthn extension or `clientExtensionResults` field providing this information would let an MCP server distinguish a local-device sign from a cross-device sign and enforce the `authenticatorClass` policy at use time rather than at issuance time. This is a gap in the WebAuthn primitive, not in MCP; mitigations require platform-side changes outside this proposal's scope.
 
 #### 8.4.2 Out-of-band confirmation channels
 
@@ -716,5 +719,9 @@ For high-stakes actions, a future profile might require N-of-M signatures from m
 #### 8.4.4 Headless agent contexts
 
 The current proposal assumes a present human. Some agent deployments are headless — long-running CI workflows, automated pipelines. A future profile might define delegated approval sessions where a human pre-authorizes a class of calls within a bounded window, with auditing of which calls executed under the delegation. The design space is large and the security model is delicate; this is genuine future work.
+
+#### 8.4.5 Non-browser client architectures
+
+The reference implementation invokes the WebAuthn ceremony through `navigator.credentials.get()` from a browser context. MCP clients exist in many other environments — CLI tools, IDE extensions, native desktop applications, headless agent runtimes — where a direct browser API is not available. The protocol surface defined by this proposal is wire-level (JSON-RPC methods, evidence shape, action-hash construction); how a client invokes the WebAuthn ceremony is a client-architecture concern this proposal does not standardize. Native clients may use platform CTAP2 bindings; CLI clients may spawn a temporary local web bridge; IDE extensions may delegate to the host editor's authentication surface. A future profile could define standardized patterns for these architectures, but doing so prematurely would over-constrain implementations that have working solutions today.
 
 <!-- No appendices in v1. Test vectors live in the reference implementation. -->
