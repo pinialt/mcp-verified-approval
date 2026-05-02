@@ -18,7 +18,7 @@ Updates: TBD
 
 ## 2. Abstract
 
-The Model Context Protocol provides advisory tool annotations and session-level authorization, but no mechanism for cryptographically verifying that a specific human consented to a specific tool invocation with specific arguments. For tool calls with high-stakes consequences — placing trades, deploying infrastructure, deleting data — a confirmation rendered by a potentially compromised client is insufficient: the same client or agent that issues the call can fabricate the approval gesture without meaningful human authorization.
+The Model Context Protocol provides advisory tool annotations and session-level authorization, but no mechanism for cryptographically binding a user-verified authenticator gesture to a specific tool invocation with specific arguments. For tool calls with high-stakes consequences — placing trades, deploying infrastructure, deleting data — a confirmation rendered by a potentially compromised client is insufficient: the same client or agent that issues the call can fabricate the approval gesture without meaningful human authorization.
 
 This proposal introduces per-call verified approval. Tools mark themselves as requiring approval via the `_meta` annotation under the `io.modelcontextprotocol/verified-approval` key. Before invoking such a tool, the client requests a server-issued challenge whose value includes a hash of the canonicalized arguments. The user authorizes the call through a WebAuthn assertion bound to that challenge. The server independently verifies the signature, recomputes the action hash from the actual tool-call arguments, and rejects mismatches. The ceremony composes additively with existing MCP primitives: OAuth Authorization remains session-level; tool annotations remain advisory unless this proposal's annotation is present; elicitation remains the mechanism for routine and out-of-band data flows.
 
@@ -30,7 +30,7 @@ The proposal delivers cryptographically verified argument-binding, freshness, an
 
 A tool that places trades. A tool that deletes files. A tool that deploys to production. A tool that transfers money. These calls share a property: the wrong invocation is not a wrong answer the user can ignore — it is a state change that has already happened by the time anyone notices. For tools in this class, per-call human consent is reasonable.
 
-The standard UX for that consent is a confirmation dialog rendered by the MCP client: a modal that names the tool, summarizes the arguments, and waits for a click. As an enforcement primitive, the dialog collapses under several common conditions:
+The most common UX for that consent is a confirmation dialog rendered by the MCP client: a modal that names the tool, summarizes the arguments, and waits for a click. As an enforcement primitive, the dialog collapses under several common conditions:
 
 - **Auto-approve modes**, where the user has pre-approved sessions of arbitrary tool use — the dialog never appears.
 - **Compromised clients**, where the agent driving the LLM loop is the same process that owns the dialog and can dismiss it programmatically.
@@ -43,7 +43,7 @@ In each case, the client or agent that issues the call can simulate approval tha
 
 #### 3.2.1 Tool annotations (destructiveHint, etc.)
 
-The MCP base spec defines tool annotations — `destructiveHint`, `readOnlyHint`, `idempotentHint`, `openWorldHint` — as advisory hints. The spec gives clients no obligation to surface them and no normative behavior tied to them. They are a UI affordance: a destructive-tool icon, a confirmation prompt the client may or may not render. Annotations serve their intended purpose; they are not the appropriate mechanism for the threat model this proposal addresses.
+The MCP base spec defines tool annotations — `destructiveHint`, `readOnlyHint`, `idempotentHint`, `openWorldHint` — as advisory hints. The spec gives clients no obligation to surface them and no normative behavior tied to them. They are a UI affordance: a destructive-tool icon, a confirmation prompt the client may or may not render. These annotations serve their intended purpose. The verified-approval annotation introduced by this proposal (§4.2) is a separate mechanism that addresses a different threat model.
 
 #### 3.2.2 OAuth Authorization
 
