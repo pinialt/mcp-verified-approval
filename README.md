@@ -8,6 +8,31 @@ MCP servers expose tools that LLM agents can call autonomously. For most tools, 
 
 This repository is the reference implementation for a proposed MCP extension that closes that gap. Tools mark themselves as requiring approval via a `_meta` annotation; the server issues a challenge whose value is bound to a hash of the canonicalized arguments; the user authorizes the call through a WebAuthn assertion against an enrolled credential; the server independently verifies the signature and rejects argument substitution. The full specification, including normative requirements, threat model, and residual risks, lives in [`sep-draft/SEP-DRAFT.md`](./sep-draft/SEP-DRAFT.md).
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client
+    participant Server
+    participant Authenticator
+
+    Note over Client,Server: initialize: server declares verifiedApproval capability
+    Note over User,Authenticator: prerequisite: at least one credential enrolled
+
+    Client->>Server: tools/list
+    Server-->>Client: tool listing with verified-approval _meta annotation
+
+    Client->>Server: approval/challenge/create (toolName, arguments)
+    Server-->>Client: challenge (nonce + actionHash, displayText, expiresAt)
+
+    Client->>User: present displayText
+    User->>Authenticator: gesture (biometric / hardware tap)
+    Authenticator-->>Client: signed assertion bound to challenge
+
+    Client->>Server: tools/call (name, arguments, _meta evidence)
+    Server->>Server: verify signature → recompute action hash → consume challenge
+    Server-->>Client: tool result (or structured approval error)
+```
+
 The proposal is structurally additive: tools without the annotation behave exactly as they do today, and clients that do not implement the ceremony interact with all non-annotated tools normally.
 
 ## Status
